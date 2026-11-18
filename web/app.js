@@ -11,7 +11,7 @@ import { followShellTheme } from './theme.js'
 import { ask, clear, confirmed, el, icon, iconFor, menu, sheet, toast } from './ui.js'
 import { openItem } from './item-view.js'
 import { openDevices } from './devices-view.js'
-import { engineLink, startEngine } from './bus.js'
+import { BUS, engineLink, startEngine } from './bus.js'
 import { mountCard } from './card.js'
 import { parentOf } from './protocol.js'
 
@@ -129,15 +129,20 @@ async function refreshStatus() {
   }
 }
 
-let source
 let refreshing = null
+/** Follow the Host's change stream; framed in DSH, the page around relays it (one stream per page). */
 function follow() {
-  source?.close()
-  source = new EventSource(api('events'))
-  source.onmessage = () => {
+  const changed = () => {
     if (state.index === null) refreshStatus()
     else refresh()
   }
+  if (embedded) {
+    const relay = new BroadcastChannel(BUS)
+    relay.addEventListener('message', ({ data }) => { if (data?.type === 'changed') changed() })
+    return
+  }
+  const source = new EventSource(api('events'))
+  source.onmessage = changed
   source.onopen = () => { if (state.index !== null) refresh() }
 }
 

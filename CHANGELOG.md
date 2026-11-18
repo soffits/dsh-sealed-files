@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- Inside DSH the panel follows the page's one change stream instead of opening its own, so it never waits for a free connection (browsers allow only a few per address over HTTP/1.1).
+
 ## 0.3.0
 
 - Uploads keep going when you leave the panel or move around DSH: they run in a worker the DSH page keeps.
