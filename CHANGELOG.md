@@ -2,7 +2,7 @@
 
 ## 0.2.0
 
-- A device already added shows a new one waiting, with its code, and approves or rejects it right there.
+- A device already added shows a new one waiting, with its code, and approves or rejects it right there. While one waits, the Devices button turns accent with a count and the sidebar entry gets a badge, both live.
 - `dsh-sealed-files-decide` takes a yes or no from outside the page (a chat button through a job, a script), applied only while the device is pending with that code. Pairing needs no model.
 - The assistant's tool no longer approves devices; its answers are plain JSON again (a pending code came back undefined after approval).
 - The approval dialog shows the code in full on phones.

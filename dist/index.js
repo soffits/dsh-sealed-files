@@ -48,6 +48,11 @@ function createApiRoutes({ service, identity, version: version2 }) {
     }
   };
   const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version: version2() }));
+  const waiting = guarded(async (request, svc) => {
+    const person = personOf(svc);
+    if (person === null) return json(200, { count: 0 });
+    return json(200, { count: svc.store.devicesOf(person.id).filter((d) => d.status === "pending").length });
+  });
   const enroll = guarded(async (request, svc) => {
     const person = personOf(svc);
     if (person === null) return refuse(403, "not-mapped");
@@ -146,6 +151,7 @@ function createApiRoutes({ service, identity, version: version2 }) {
   });
   return [
     { path: `${API}/whoami`, methods: ["GET"], requestBody: "buffered", fetch: whoami },
+    { path: `${API}/waiting`, methods: ["GET"], requestBody: "buffered", fetch: waiting },
     { path: `${API}/enroll`, methods: ["POST"], requestBody: "buffered", fetch: enroll },
     { path: `${API}/call`, methods: ["POST"], requestBody: "buffered", fetch: call },
     { path: `${API}/part`, methods: ["POST"], requestBody: "streaming", fetch: part },

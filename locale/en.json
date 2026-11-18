@@ -96,6 +96,7 @@
   "pending.title": "“{name}” wants to join",
   "pending.text": "Approve only if that device shows this code.",
   "devices.approveTitle": "Approve this device?",
-  "devices.reject": "Reject"
+  "devices.reject": "Reject",
+  "devices.waiting": "{n} waiting"
  }
 }

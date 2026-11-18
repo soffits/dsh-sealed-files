@@ -226,7 +226,7 @@ function draw() {
     el('h1', { text: t('title') }),
     el('div', { class: 'grow' }),
     embedded && el('a', { class: 'btn icon', href: './', target: '_blank', rel: 'noopener', title: t('openTab'), 'aria-label': t('openTab') }, icon('external')),
-    el('button', { class: 'btn icon', title: t('devices'), 'aria-label': t('devices'), onclick: () => openDevices(app) }, icon('devices')),
+    devicesButton(index.pending?.length ?? 0),
     newButton)
   const tabs = el('div', { class: 'tabs', role: 'tablist' }, index.spaces.map(space => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(space.id === state.space), onclick: () => { state.space = space.id; state.folder = ''; draw() } }, spaceLabel(space))))
   const waiting = (index.pending ?? []).map(device => el('div', { class: 'banner', role: 'status' },
@@ -240,6 +240,13 @@ function draw() {
   clear(root)
   root.append(...[bar, tabs, state.folder !== '' && crumbs, main, fileInput, tray].filter(Boolean))
   drawTray()
+}
+
+/** The Devices button; while devices wait it takes the accent colour and their count, like an unread badge. */
+function devicesButton(waiting) {
+  const label = waiting > 0 ? `${t('devices')} · ${t('devices.waiting', { n: waiting })}` : t('devices')
+  return el('button', { class: `btn icon${waiting > 0 ? ' alert' : ''}`, title: label, 'aria-label': label, onclick: () => openDevices(app) },
+    icon('devices'), waiting > 0 && el('span', { class: 'badge', text: waiting > 9 ? '9+' : String(waiting) }))
 }
 
 async function approveDevice(device) {

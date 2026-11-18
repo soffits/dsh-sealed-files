@@ -217,6 +217,28 @@ async function main() {
       await frame.getByRole('button', { name: 'Close' }).click()
     }
 
+    // A third device asks to join: both added devices show it at once, badges included, and it is rejected.
+    const third = await device(browser, dsh.url, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    await third.page.goto(app)
+    await third.page.getByRole('button', { name: 'Add this device' }).click()
+    const thirdCode = (await third.page.locator('.code').textContent()).trim()
+    await frame.locator('.banner', { hasText: thirdCode }).waitFor({ timeout: 10_000 })
+    await p.locator('.banner', { hasText: thirdCode }).waitFor({ timeout: 10_000 })
+    await d.locator('.sealed-files-badge', { hasText: '1' }).waitFor({ timeout: 10_000 })
+    assert.equal(await p.locator('.btn.alert .badge').textContent(), '1')
+    assert.equal(await frame.locator('.btn.alert .badge').textContent(), '1')
+    if (shots) {
+      await sleep(400)
+      await p.screenshot({ path: join(shots, 'phone-waiting.png') })
+      await d.screenshot({ path: join(shots, 'desktop-waiting.png') })
+    }
+    await frame.locator('.banner', { hasText: thirdCode }).getByRole('button', { name: 'Reject' }).click()
+    await p.locator('.banner').waitFor({ state: 'detached', timeout: 10_000 })
+    await d.locator('.sealed-files-badge').waitFor({ state: 'detached', timeout: 10_000 })
+    assert.equal(await p.locator('.btn.alert').count(), 0)
+    await third.context.close()
+    log('a waiting device showed live on both (banner, Devices badge, sidebar badge) and was rejected')
+
     // Nothing readable went over the wire.
     const secrets = ['holiday-archive', 'beach-walk', 'boarding-pass', 'Hotel booking', 'room 412', '7731-QX', 'e-ticket']
     for (const { url, body } of [...phone.requests, ...desk.requests]) {

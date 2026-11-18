@@ -96,6 +96,7 @@
   "pending.title": "“{name}”想加进来",
   "pending.text": "那台设备上显示的码和这里一样才批准。",
   "devices.approveTitle": "批准这台设备？",
-  "devices.reject": "拒绝"
+  "devices.reject": "拒绝",
+  "devices.waiting": "{n} 台等待批准"
  }
 }
