@@ -29,7 +29,11 @@ before(async () => {
   service = await createService({ config, limits: limitsOf(config), stateDir: config.stateDir, identityFile: join(dir, 'state/identity.txt'), officeToPdf: () => undefined, logger: quiet })
   routes = Object.fromEntries(createApiRoutes({ service: () => service, identity: () => ({ current: () => (who ? { provider: 'oidc', issuer: 'x', id: who } : null) }), version: 'test' }).map(r => [r.path.split('/').pop(), r]))
 })
-after(() => rmSync(dir, { recursive: true, force: true }))
+after(async () => {
+  await service.store.flush()
+  await new Promise(done => setTimeout(done, 200))
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+})
 
 const request = (name, init = {}, query = '') => routes[name].fetch(new Request(`http://local/api/sealed-files/${name}${query}`, init))
 
