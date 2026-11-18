@@ -1,0 +1,10 @@
+# Bundle layer for @soffits/dsh-sealed-files. The service row serves the page and
+# the sealed API; the tools row gives agents the sealedfiles tool. For a DSH several
+# people sign in to, set people / peopleFile (and notifyCommand, to send pairing
+# codes) in a profile override of the sealed-files row.
+- insert:
+    - id: sealed-files
+      name: '@soffits/dsh-sealed-files'
+      config: {}
+    - id: sealed-files-tools
+      name: '@soffits/dsh-sealed-files/tools'

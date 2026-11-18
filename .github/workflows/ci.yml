@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Built files are current
+        run: npm run build && git diff --exit-code -- dist web/vendor.js web/sw.js
+      - run: npm run check
+      - name: age command for the interop test
+        run: curl -sL https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz | tar xz && echo "$PWD/age" >> "$GITHUB_PATH"
+      - run: npm test

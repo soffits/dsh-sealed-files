@@ -1,0 +1,80 @@
+{
+  "name": "@soffits/dsh-sealed-files",
+  "version": "0.1.0",
+  "description": "End-to-end encrypted files and text for DeepSeek Harness: a panel in the Web UI where files are encrypted in the browser, streamed and previewed with seeking, and shared between the people you let in and your assistant.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Sakina",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soffits/dsh-sealed-files.git"
+  },
+  "homepage": "https://github.com/soffits/dsh-sealed-files#readme",
+  "bugs": {
+    "url": "https://github.com/soffits/dsh-sealed-files/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "e2ee",
+    "age",
+    "file-transfer",
+    "encryption"
+  ],
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tools": "./dist/tools.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/*",
+    "client.js",
+    "web/*",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs/*.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "for f in index.js tools.js client.js scripts/*.mjs src/*.js web/*.js test/*.js; do node --check \"$f\" || exit 1; done",
+    "test": "node --test test/*.test.js",
+    "test:browsers": "node scripts/build.mjs && node test/browsers/run.js"
+  },
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "age-encryption": "^0.3.1",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.1"
+  }
+}
