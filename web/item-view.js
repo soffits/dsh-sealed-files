@@ -7,8 +7,10 @@ import { streamUrl } from './device.js'
 import { bytes, dateTime, t, when } from './i18n.js'
 import { ask, confirmed, el, icon, sheet, toast } from './ui.js'
 
-const SHARE_LIMIT = 200 * 1024 * 1024
-const canShare = () => typeof navigator.canShare === 'function' && /iPhone|iPad|Android/.test(navigator.userAgent)
+/** Phones save through the share sheet (Save to Files, Save Image), which must open within the tap: small files are fetched as the item opens. */
+const SHARE_LIMIT = 50 * 1024 * 1024
+const phone = () => /iPhone|iPad|Android/.test(navigator.userAgent)
+const canShare = () => phone() && typeof navigator.canShare === 'function'
 
 export function openItem(app, item) {
   const s = sheet({ title: item.name, onClose: () => app.closedItem() })
@@ -17,13 +19,21 @@ export function openItem(app, item) {
   const actions = el('div', { class: 'actions' })
   s.body.append(view, facts, actions)
 
+  let ready = null
+  if (canShare() && item.size <= SHARE_LIMIT) {
+    fetch(streamUrl(item.id)).then(r => r.blob()).then((blob) => {
+      const file = new File([blob], item.name, { type: item.type.split(';')[0] })
+      if (navigator.canShare({ files: [file] })) ready = file
+    }, () => {})
+  }
+
   const render = (current) => {
     facts.replaceChildren(
       el('span', { text: bytes(current.size) }),
       el('span', { text: `${t('from', { name: app.senderName(current) })} · ${dateTime(current.created)}` }),
       el('span', { text: current.pinned ? t('kept') : t('expires', { when: when(current.expires) }) }))
     actions.replaceChildren(...[
-      el('button', { class: 'btn primary', onclick: () => save(current) }, icon('download'), canShare() ? t('save') : t('download')),
+      el('button', { class: 'btn primary', onclick: () => save(current) }, icon('download'), phone() ? t('save') : t('download')),
       current.kind === 'text' && el('button', { class: 'btn', onclick: () => copy(current) }, icon('copy'), t('copy')),
       el('button', { class: 'btn', onclick: () => app.op('pin', { id: current.id, pinned: !current.pinned }).then(render) }, icon('pin'), current.pinned ? t('unpin') : t('pin')),
       el('button', { class: 'btn', onclick: () => rename(current) }, icon('edit'), t('rename')),
@@ -33,17 +43,18 @@ export function openItem(app, item) {
   }
 
   async function save(current) {
-    if (canShare() && current.size <= SHARE_LIMIT) {
+    if (ready !== null && current.id === item.id) {
       try {
-        const blob = await fetch(streamUrl(current.id)).then(r => r.blob())
-        const file = new File([blob], current.name, { type: current.type.split(';')[0] })
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file] })
-          return
-        }
+        await navigator.share({ files: [ready] })
       } catch (error) {
-        if (error.name === 'AbortError') return
+        if (error.name !== 'AbortError') toast(t('error', { error: error.message }))
       }
+      return
+    }
+    if (phone()) {
+      // The browser's own download prompt: a navigation answered as an attachment leaves this page in place.
+      location.assign(streamUrl(current.id, true))
+      return
     }
     // A navigation inside the worker's scope, answered as an attachment: the browser's own downloader takes the stream.
     const frame = el('iframe', { src: streamUrl(current.id, true), hidden: true, title: current.name })

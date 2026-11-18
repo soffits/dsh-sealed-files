@@ -14,7 +14,8 @@ export function openDevices(app) {
 
   async function draw() {
     const devices = await app.op('devices')
-    devices.sort((a, b) => Number(b.current) - Number(a.current) || (a.status === 'pending' ? -1 : 1) || b.created - a.created)
+    const rank = device => (device.current ? 0 : device.status === 'pending' ? 1 : 2)
+    devices.sort((a, b) => rank(a) - rank(b) || b.created - a.created)
     list.replaceChildren(...devices.map(device => el('li', {},
       el('div', { class: 'what' },
         el('div', { text: device.current ? `${device.name} (${t('devices.this')})` : device.name }),
