@@ -159,11 +159,18 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           if (typeof EventSource !== 'function') return () => {}
           const read = () => fetch(api('waiting'), { cache: 'no-store', credentials: 'same-origin' }).then(r => (r.ok ? r.json() : { count: 0 })).then(body => setWaiting(body.count ?? 0), () => {})
+          // One stream per page: the framed panel gets its change notices from here, over the transfer channel.
+          const relay = typeof BroadcastChannel === 'function' ? new BroadcastChannel('sealed-files') : null
           const source = new EventSource(api('events'), { withCredentials: true })
-          source.onopen = read
-          source.onmessage = (event) => { try { if (JSON.parse(event.data).devices) read() } catch { /* a beat */ } }
-          return () => source.close()
-        }, 'sealed-files: waiting devices')
+          source.onopen = () => { read(); relay?.postMessage({ type: 'changed', open: true }) }
+          source.onmessage = (event) => {
+            let notice = {}
+            try { notice = JSON.parse(event.data) } catch { return }
+            relay?.postMessage({ type: 'changed', ...notice })
+            if (notice.devices) read()
+          }
+          return () => { source.close(); relay?.close() }
+        }, 'sealed-files: change stream')
 
         ctx.effect(() => {
           takeLink()
