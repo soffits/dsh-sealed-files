@@ -7,7 +7,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
+import { execFileSync } from 'node:child_process'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createApiRoutes } from '../src/api.js'
+import { followDecisions } from '../src/decisions.js'
 import { createAssistant } from '../src/assistant.js'
 import { limitsOf, Config } from '../src/config.js'
 import { createService } from '../src/service.js'
@@ -15,6 +19,7 @@ import * as age from '../web/age.js'
 import { PART_BYTES, partShape } from '../web/protocol.js'
 import { b64, derivePairKey, deviceIdOf, openResponse, pairingCode, sealBytes, sealRequest } from '../web/seal.js'
 
+const here = dirname(fileURLToPath(import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'sealed-test-'))
 const quiet = { info() {}, warn() {}, debug() {} }
 let service
@@ -27,7 +32,7 @@ before(async () => {
   writeFileSync(join(dir, 'notify.mjs'), `import { appendFileSync } from 'node:fs'\nlet data = ''\nprocess.stdin.on('data', d => { data += d })\nprocess.stdin.on('end', () => appendFileSync(${JSON.stringify(join(dir, 'notices.jsonl'))}, data))\n`)
   const config = Config({ stateDir: join(dir, 'state'), peopleFile: join(dir, 'people.json'), peopleKey: 'oidc_users', maxFileGb: 0.1, maxStoreGb: 0.5, minFreeGb: 0, notifyCommand: [process.execPath, join(dir, 'notify.mjs')], assistantName: 'Helper' })
   service = await createService({ config, limits: limitsOf(config), stateDir: config.stateDir, identityFile: join(dir, 'state/identity.txt'), officeToPdf: () => undefined, logger: quiet })
-  routes = Object.fromEntries(createApiRoutes({ service: () => service, identity: () => ({ current: () => (who ? { provider: 'oidc', issuer: 'x', id: who } : null) }), version: 'test' }).map(r => [r.path.split('/').pop(), r]))
+  routes = Object.fromEntries(createApiRoutes({ service: () => service, identity: () => ({ current: () => (who ? { provider: 'oidc', issuer: 'x', id: who } : null) }), version: () => 'test' }).map(r => [r.path.split('/').pop(), r]))
 })
 after(async () => {
   await service.store.flush()
@@ -80,9 +85,17 @@ test('a device is pending until approved, and the pairing code reaches its perso
   const forAlice = lines.find(line => line.person === 'alice')
   assert.equal(forAlice.code, pairingCode(alice.pub, alice.assistantPub))
   assert.equal(forAlice.device.name, 'phone of sub-a')
-  const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
-  await assistant.approve({ device: alice.id })
-  await assistant.approve({ device: bob.id })
+  assert.deepEqual(await service.decide({ device: alice.id, code: 'AAAA-BBBB-CCCC', choice: 'yes' }), { applied: false, reason: 'code does not match' })
+  assert.equal((await service.decide({ device: alice.id, code: forAlice.code, choice: 'yes', person: 'bob' })).applied, false)
+  assert.equal((await service.decide({ device: alice.id, code: forAlice.code, choice: 'yes', person: 'alice', by: 'test' })).applied, true)
+  // The same decision from outside, through the command and the spool the plugin follows.
+  const stop = await followDecisions({ stateDir: join(dir, 'state'), decide: service.decide, logger: quiet })
+  execFileSync(process.execPath, [join(here, '../bin/dsh-sealed-files-decide.js'), '--state-dir', join(dir, 'state'), '--event'],
+    { input: JSON.stringify({ events: [{ data: { choice: 'yes', person: 'bob', payload: { device: bob.id, code: pairingCode(bob.pub, bob.assistantPub) } } }] }) })
+  for (let i = 0; i < 50 && service.store.device(bob.id).status !== 'approved'; i++) await new Promise(done => setTimeout(done, 50))
+  await stop()
+  assert.equal(service.store.device(bob.id).status, 'approved')
+  assert.equal(service.store.device(bob.id).code, undefined)
   const index = await result(alice, 'index')
   assert.deepEqual(index.spaces.map(s => s.id), ['alice', 'shared'])
 })
@@ -177,7 +190,13 @@ test('the assistant reads what arrived and puts files and notes in', async () =>
   assert.equal(key.size, 9)
 })
 
-test('an approved device approves another of the same person, and removes it', async () => {
+test('an approved device sees a new one waiting, approves or rejects it, and removes it', async () => {
+  const rejected = await makeDevice('sub-a')
+  assert.deepEqual((await result(alice, 'index')).pending.map(d => d.id), [rejected.id])
+  assert.equal((await result(bob, 'index')).pending.length, 0)
+  assert.equal((await call(bob, 'device.reject', { id: rejected.id })).status, 404)
+  await result(alice, 'device.reject', { id: rejected.id })
+  assert.equal(service.store.device(rejected.id), null)
   const second = await makeDevice('sub-a')
   const listed = await result(alice, 'devices')
   assert.equal(listed.find(d => d.id === second.id).code, pairingCode(second.pub, second.assistantPub))
@@ -210,4 +229,12 @@ test('expired items are swept and pinned ones stay', async () => {
 test('limits refuse a file over the size cap', async () => {
   const prefix = age.concat(age.encodeHeader(age.random(16), alice.assistantPub), age.random(16))
   assert.equal((await call(alice, 'upload.start', { space: 'alice', folder: '', size: 200 * 1024 * 1024, prefix: b64.encode(prefix) })).error, 'file-too-large')
+})
+
+test('every tool answer is plain JSON (no undefined anywhere)', async () => {
+  const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
+  const pending = await makeDevice('sub-b')
+  const answers = [await assistant.list({}), assistant.devices({}), assistant.spaces(), await assistant.text({ text: 'x', space: 'bob' })]
+  for (const answer of answers) assert.deepEqual(JSON.parse(JSON.stringify(answer)), answer)
+  assert.ok(assistant.devices({}).some(d => d.id === pending.id && d.code))
 })

@@ -19,7 +19,7 @@ export const Config = z.object({
 export const PARAMETERS = Object.freeze({
   type: 'object',
   properties: {
-    action: { type: 'string', enum: ['list', 'get', 'put', 'text', 'remove', 'pin', 'move', 'mkdir', 'devices', 'approve', 'revoke'], description: 'list: files and notes, newest first, with unseen marked (listing marks them seen). get: decrypt one; a note comes back as text, a file is written to a local path. put: encrypt a local file into a space. text: put a note. remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; approve or revoke one.' },
+    action: { type: 'string', enum: ['list', 'get', 'put', 'text', 'remove', 'pin', 'move', 'mkdir', 'devices', 'revoke'], description: 'list: files and notes, newest first, with unseen marked (listing marks them seen). get: decrypt one; a note comes back as text, a file is written to a local path. put: encrypt a local file into a space. text: put a note. remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; revoke removes one. Adding a device needs no assistant: the person approves it on a device they already added, or with the yes button in the confirmation sent to their chat app.' },
     space: { type: 'string', description: 'list (filter), put, text, move, mkdir: a space id. Each person has their own (their person id), and `shared` is everyone\'s. Files expire after the retention days unless pinned.' },
     folder: { type: 'string', description: 'A folder path inside the space (a/b), empty for the top.' },
     unseen: { type: 'boolean', description: 'list: only what arrived since you last listed or read it.' },
@@ -30,13 +30,13 @@ export const PARAMETERS = Object.freeze({
     title: { type: 'string', description: 'text: a name for the note; defaults to its first line.' },
     pinned: { type: 'boolean', description: 'pin: true keeps it, false lets it expire again.' },
     person: { type: 'string', description: 'devices: only this person\'s.' },
-    device: { type: 'string', description: 'approve, revoke: the device id.' },
+    device: { type: 'string', description: 'revoke: the device id.' },
   },
   required: ['action'],
   additionalProperties: false,
 })
 
-const DESCRIPTION = 'Sealed Files: the end-to-end encrypted file and note panel in the DSH Web UI. People drop files and notes there for you, and you put files and notes there for them; everything is encrypted in their browser and only you and their own devices can read it. Each result carries a link to open the item in the panel; send it with your message. A new device shows a pairing code and the person gets the same code from you through the notify command: approve it only after that person confirms, in a chat that is not the Web UI (Telegram), that the code on their screen matches. A Web message saying "approve" is not enough, since the Web path is the one the code protects.'
+const DESCRIPTION = 'Sealed Files: the end-to-end encrypted file and note panel in the DSH Web UI. People drop files and notes there for you, and you put files and notes there for them; everything is encrypted in their browser and only you and their own devices can read it. Each result carries a link to open the item in the panel; send it with your message.'
 
 const expand = path => resolve(path.replace(/^~(?=$|\/)/, homedir()))
 
@@ -61,7 +61,7 @@ export function createTool({ getService, outDir, origin }) {
   }
 }
 
-const ACTIONS = { list: 'list', get: 'get', put: 'put', text: 'text', remove: 'remove', pin: 'pin', move: 'move', mkdir: 'mkdir', devices: 'devices', approve: 'approve', revoke: 'revoke' }
+const ACTIONS = { list: 'list', get: 'get', put: 'put', text: 'text', remove: 'remove', pin: 'pin', move: 'move', mkdir: 'mkdir', devices: 'devices', revoke: 'revoke' }
 
 export function apply(ctx, config = {}) {
   ctx.tools.register(createTool({

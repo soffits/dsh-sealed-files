@@ -65,7 +65,7 @@
   "enroll.name": "Name for this device",
   "enroll.start": "Add this device",
   "enroll.code": "Pairing code",
-  "enroll.wait": "{assistant} sends you the same code in a chat message. If the two match, reply there that they do. You can also approve this device from one you added before.",
+  "enroll.wait": "On a device you already added, open Sealed Files: it shows this device with this code. If the codes match, press Approve there.",
   "enroll.waiting": "Waiting for approval…",
   "enroll.homeScreen": "On iPhone or iPad, use DSH from your Home Screen. Safari clears a website's keys after a week without a visit; the Home Screen app keeps them.",
   "notMapped": "This sign-in isn't linked to anyone here, so there are no files to show.",
@@ -82,7 +82,7 @@
   "devices.seen": "used {when}",
   "devices.added": "added {when}",
   "devices.confirmRemove": "Remove “{name}”? It can be added again with a new code.",
-  "devices.approveCheck": "Approve “{name}”? Only if it shows code {code}.",
+  "devices.approveCheck": "“{name}” must show this code:",
   "error": "Something went wrong: {error}",
   "error.file-too-large": "That file is larger than the limit ({max}).",
   "error.store-full": "There's no room left here. Delete something first.",
@@ -91,6 +91,11 @@
   "count.items": "{n} items",
   "loading": "Loading…",
   "offline": "Reconnecting…",
-  "version": "Sealed Files {version}"
+  "version": "Sealed Files {version}",
+  "enroll.waitChat": "No other device at hand? The same code comes to your chat app with two buttons; press the yes one if it matches.",
+  "pending.title": "“{name}” wants to join",
+  "pending.text": "Approve only if that device shows this code.",
+  "devices.approveTitle": "Approve this device?",
+  "devices.reject": "Reject"
  }
 }

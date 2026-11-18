@@ -20,7 +20,8 @@ export function apply(ctx) {
   const service = () => ctx.get('sealedFiles')?.service()
   ctx.connection.fetch.register({ path: '/api/sealed-files-test/approve', methods: ['POST'], requestBody: 'buffered', fetch: async (request) => {
     const { id } = await request.json()
-    return Response.json(await service().approve(id, 'assistant'))
+    const device = service().store.device(id)
+    return Response.json(await service().decide({ device: id, code: device.code, choice: 'yes', by: 'test' }))
   } })
   ctx.connection.fetch.register({ path: '/api/sealed-files-test/note', methods: ['POST'], requestBody: 'buffered', fetch: async (request) => {
     const { createAssistant } = await import(process.env.SEALED_FILES_ASSISTANT)

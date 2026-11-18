@@ -27,6 +27,7 @@ const json = (status, body) => new Response(JSON.stringify(body), { status, head
 const refuse = (status, code) => json(status, { error: code })
 
 export function createApiRoutes({ service, identity, version }) {
+  // `version()` is read per request, so an update in place reports itself at once.
   const seen = new Map()
 
   /** A nonce is good once within the window. */
@@ -64,7 +65,7 @@ export function createApiRoutes({ service, identity, version }) {
     }
   }
 
-  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version }))
+  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version: version() }))
 
   const enroll = guarded(async (request, svc) => {
     const person = personOf(svc)

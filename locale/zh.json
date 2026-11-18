@@ -65,7 +65,7 @@
   "enroll.name": "设备名字",
   "enroll.start": "添加这台设备",
   "enroll.code": "配对码",
-  "enroll.wait": "{assistant}会在聊天里发给你同一串码。两边一样的话，就在那边回一句一样。也可以在之前加过的设备上批准这一台。",
+  "enroll.wait": "在一台已经加过的设备上打开加密文件，那里会显示这台设备和这串码。两边一样，就在那边点“批准”。",
   "enroll.waiting": "等待批准…",
   "enroll.homeScreen": "iPhone 和 iPad 上请从主屏幕打开 DSH。Safari 一周没打开网站会清掉它的钥匙，主屏幕上的 App 不会。",
   "notMapped": "这个登录账号没有对应到这里的人，所以没有文件可以显示。",
@@ -82,7 +82,7 @@
   "devices.seen": "{when}用过",
   "devices.added": "{when}添加",
   "devices.confirmRemove": "移除“{name}”？之后可以用新的码再加回来。",
-  "devices.approveCheck": "批准“{name}”？它显示的码必须是 {code}。",
+  "devices.approveCheck": "“{name}”上显示的必须是这串码：",
   "error": "出了点问题：{error}",
   "error.file-too-large": "这个文件超过了上限（{max}）。",
   "error.store-full": "这里没有空间了，先删掉一些吧。",
@@ -91,6 +91,11 @@
   "count.items": "{n} 项",
   "loading": "加载中…",
   "offline": "正在重新连接…",
-  "version": "加密文件 {version}"
+  "version": "加密文件 {version}",
+  "enroll.waitChat": "手边没有别的设备？同一串码也会发到你的聊天软件里，带两个按钮，一样就点“一样”。",
+  "pending.title": "“{name}”想加进来",
+  "pending.text": "那台设备上显示的码和这里一样才批准。",
+  "devices.approveTitle": "批准这台设备？",
+  "devices.reject": "拒绝"
  }
 }

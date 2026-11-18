@@ -1,6 +1,6 @@
 // index.js
 import { homedir } from "node:os";
-import { join as join4, resolve as resolve3 } from "node:path";
+import { join as join5, resolve as resolve3 } from "node:path";
 import { readFileSync as readFileSync3 } from "node:fs";
 
 // src/api.js
@@ -15,7 +15,7 @@ var HEARTBEAT_MS = 25e3;
 var HEADERS = { "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 var json = (status, body) => new Response(JSON.stringify(body), { status, headers: { ...HEADERS, "content-type": "application/json" } });
 var refuse = (status, code) => json(status, { error: code });
-function createApiRoutes({ service, identity, version }) {
+function createApiRoutes({ service, identity, version: version2 }) {
   const seen = /* @__PURE__ */ new Map();
   function fresh(envelope) {
     const now = Date.now();
@@ -47,7 +47,7 @@ function createApiRoutes({ service, identity, version }) {
       return refuse(500, "failed");
     }
   };
-  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version }));
+  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version: version2() }));
   const enroll = guarded(async (request, svc) => {
     const person = personOf(svc);
     if (person === null) return refuse(403, "not-mapped");
@@ -1157,9 +1157,46 @@ var limitsOf = (config) => ({
   minFreeBytes: Math.floor(config.minFreeGb * GIB)
 });
 
+// src/decisions.js
+import { watch } from "node:fs";
+import { appendFile, mkdir, readdir as readdir2, readFile as readFile2, rm } from "node:fs/promises";
+import { join } from "node:path";
+var DECISIONS = "decisions";
+async function followDecisions({ stateDir, decide, logger }) {
+  const dir = join(stateDir, DECISIONS);
+  await mkdir(dir, { recursive: true, mode: 448 });
+  let running = Promise.resolve();
+  async function take() {
+    for (const name2 of (await readdir2(dir)).filter((n) => n.endsWith(".json")).sort()) {
+      const path = join(dir, name2);
+      let outcome;
+      try {
+        const decision = JSON.parse(await readFile2(path, "utf8"));
+        outcome = await decide(decision);
+        logger.info("decision for device %s: %s", decision.device, outcome.applied ? decision.choice : outcome.reason);
+        outcome = { decision, ...outcome };
+      } catch (error) {
+        outcome = { file: name2, error: error.message };
+      }
+      await appendFile(join(stateDir, "decisions.jsonl"), `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), ...outcome })}
+`, { mode: 384 });
+      await rm(path, { force: true });
+    }
+  }
+  const kick = () => {
+    running = running.then(take, take).catch((error) => logger.warn("decisions: %s", error.message));
+  };
+  const watcher = watch(dir, kick);
+  kick();
+  return async () => {
+    watcher.close();
+    await running;
+  };
+}
+
 // src/service.js
 import { spawn } from "node:child_process";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 import { b64 as b642, deviceIdOf, openBytes, pairingCode } from "../web/seal.js";
 import { ID as ID2, SHARED as SHARED2, cleanFolder as cleanFolder3, cleanName } from "../web/protocol.js";
 
@@ -1301,7 +1338,7 @@ var personIdOf = (name2) => String(name2).trim().toLowerCase().replace(/\s+/g, "
 function createPeople(config, warn) {
   let fileStamp = "";
   let fromFile = {};
-  function readFile4() {
+  function readFile5() {
     if (config.peopleFile === "") return {};
     let stamp;
     try {
@@ -1325,7 +1362,7 @@ function createPeople(config, warn) {
   }
   function table() {
     const out = /* @__PURE__ */ new Map();
-    for (const [sub, name2] of [...Object.entries(readFile4()), ...Object.entries(config.people)]) {
+    for (const [sub, name2] of [...Object.entries(readFile5()), ...Object.entries(config.people)]) {
       if (typeof name2 !== "string") continue;
       const id = personIdOf(name2);
       if (PERSON_ID.test(id)) out.set(sub, { id, name: name2.trim() });
@@ -1350,8 +1387,8 @@ function createPeople(config, warn) {
 
 // src/store.js
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile as readFile2, rename, rm, stat as stat2, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir as mkdir2, readFile as readFile3, rename, rm as rm2, stat as stat2, writeFile } from "node:fs/promises";
+import { join as join2 } from "node:path";
 import { SHARED, cleanFolder, within } from "../web/protocol.js";
 import { base32nopad } from "../web/vendor.js";
 var ASSISTANT = "assistant";
@@ -1359,18 +1396,18 @@ var DAY = 864e5;
 var PENDING_MS = DAY;
 var newId = () => base32nopad.encode(randomBytes(10)).toLowerCase();
 async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdleDays, logger }) {
-  const itemsDir = join(dir, "items");
-  await mkdir(itemsDir, { recursive: true, mode: 448 });
-  const indexFile = join(dir, "index.json");
-  const devicesFile = join(dir, "devices.json");
+  const itemsDir = join2(dir, "items");
+  await mkdir2(itemsDir, { recursive: true, mode: 448 });
+  const indexFile = join2(dir, "index.json");
+  const devicesFile = join2(dir, "devices.json");
   const index = { items: {}, folders: {}, ...await readJson(indexFile) };
   const roster = { devices: {}, ...await readJson(devicesFile) };
   const listeners = /* @__PURE__ */ new Set();
-  let version = 0;
+  let version2 = 0;
   let saving = Promise.resolve();
   async function readJson(file) {
     try {
-      return JSON.parse(await readFile2(file, "utf8"));
+      return JSON.parse(await readFile3(file, "utf8"));
     } catch (error) {
       if (error.code !== "ENOENT") logger.warn("could not read %s: %s", file, error.message);
       return {};
@@ -1388,14 +1425,14 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     return saving;
   }
   function changed({ spaces = [], persons = [] }) {
-    version++;
-    for (const listener of listeners) listener({ version, spaces, persons });
+    version2++;
+    for (const listener of listeners) listener({ version: version2, spaces, persons });
   }
   const spacesOf = (person) => person === ASSISTANT ? allSpaces() : [person, ...sharedSpace ? [SHARED] : []];
   const allSpaces = () => [...people.all().map((p) => p.id), ...sharedSpace ? [SHARED] : []];
   const canSee = (person, space) => spacesOf(person).includes(space);
   const concerns = (person, change) => person === ASSISTANT || change.persons.includes(person) || change.spaces.some((space) => canSee(person, space));
-  const itemPath = (id) => join(itemsDir, `${id}.age`);
+  const itemPath = (id) => join2(itemsDir, `${id}.age`);
   function itemsFor(person) {
     const spaces = new Set(spacesOf(person));
     return Object.values(index.items).filter((item) => spaces.has(item.space) && !item.derivedOf);
@@ -1438,7 +1475,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     const ids = [id, ...Object.values(index.items).filter((other) => other.derivedOf === id).map((other) => other.id)];
     for (const each of ids) delete index.items[each];
     await save([[indexFile, index]]);
-    await Promise.all(ids.map((each) => rm(itemPath(each), { force: true })));
+    await Promise.all(ids.map((each) => rm2(itemPath(each), { force: true })));
     changed({ spaces: [item.space] });
   }
   async function makeFolder(person, space, path) {
@@ -1516,7 +1553,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     for (const device of dropped) delete roster.devices[device.id];
     if (gone.length + orphans.length > 0) {
       await save([[indexFile, index]]);
-      await Promise.all([...gone, ...orphans].map((item) => rm(itemPath(item.id), { force: true })));
+      await Promise.all([...gone, ...orphans].map((item) => rm2(itemPath(item.id), { force: true })));
       changed({ spaces: [...new Set(gone.map((item) => item.space))] });
     }
     if (dropped.length > 0) {
@@ -1563,7 +1600,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     usedBytes,
     expiresAt: (pinned, now = Date.now()) => pinned ? null : now + retentionDays * DAY,
     get version() {
-      return version;
+      return version2;
     },
     /** Follow changes: `listener({ version, spaces, persons })`. Returns the unsubscribe. */
     subscribe(listener) {
@@ -1633,29 +1670,29 @@ function createPreviews({ store, identity, officeToPdf, logger }) {
 }
 
 // src/uploads.js
-import { mkdir as mkdir2, open as open2, readdir as readdir2, readFile as readFile3, rename as rename2, rm as rm2, statfs, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join2 } from "node:path";
+import { mkdir as mkdir3, open as open2, readdir as readdir3, readFile as readFile4, rename as rename2, rm as rm3, statfs, writeFile as writeFile2 } from "node:fs/promises";
+import { join as join3 } from "node:path";
 import { CHUNK_CT as CHUNK_CT2, NONCE_BYTES as NONCE_BYTES2, chunkCount as chunkCount2, parseHeader as parseHeader2, payloadSize as payloadSize2 } from "../web/age.js";
 import { cleanFolder as cleanFolder2, partCount, partShape } from "../web/protocol.js";
 var DAY2 = 864e5;
 var UPLOAD_ID = /^[a-z2-7]{16}$/;
 async function createUploads({ dir, store, identity, limits, uploadDays, logger }) {
-  const root = join2(dir, "uploads");
-  await mkdir2(root, { recursive: true, mode: 448 });
+  const root = join3(dir, "uploads");
+  await mkdir3(root, { recursive: true, mode: 448 });
   const metas = /* @__PURE__ */ new Map();
   const keys = /* @__PURE__ */ new Map();
-  for (const name2 of await readdir2(root).catch(() => [])) {
+  for (const name2 of await readdir3(root).catch(() => [])) {
     try {
-      metas.set(name2, JSON.parse(await readFile3(join2(root, name2, "meta.json"), "utf8")));
+      metas.set(name2, JSON.parse(await readFile4(join3(root, name2, "meta.json"), "utf8")));
     } catch {
-      await rm2(join2(root, name2), { recursive: true, force: true });
+      await rm3(join3(root, name2), { recursive: true, force: true });
     }
   }
   const fail2 = (status2, message) => Object.assign(new Error(message), { status: status2 });
   const saving = /* @__PURE__ */ new Map();
   function saveMeta(meta) {
     const write2 = async () => {
-      const file = join2(root, meta.id, "meta.json");
+      const file = join3(root, meta.id, "meta.json");
       await writeFile2(`${file}.tmp`, JSON.stringify(meta), { mode: 384 });
       await rename2(`${file}.tmp`, file);
     };
@@ -1663,7 +1700,7 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
     saving.set(meta.id, next);
     return next;
   }
-  const dataPath = (id) => join2(root, id, "data.age");
+  const dataPath = (id) => join3(root, id, "data.age");
   async function keyOf(meta) {
     let key = keys.get(meta.id);
     if (key === void 0) {
@@ -1711,7 +1748,7 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
     const cipherSize = prefix.length + payloadSize2(size);
     await makeRoom(cipherSize);
     const id = newId().slice(0, 16);
-    await mkdir2(join2(root, id), { mode: 448 });
+    await mkdir3(join3(root, id), { mode: 448 });
     const handle = await open2(dataPath(id), "wx", 384);
     try {
       await handle.truncate(cipherSize);
@@ -1765,7 +1802,7 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
     saving.delete(id);
     metas.delete(id);
     keys.delete(id);
-    await rm2(join2(root, id), { recursive: true, force: true });
+    await rm3(join3(root, id), { recursive: true, force: true });
     const now = Date.now();
     return store.addItem({
       id: itemId,
@@ -1795,7 +1832,7 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
     saving.delete(id);
     metas.delete(id);
     keys.delete(id);
-    await rm2(join2(root, id), { recursive: true, force: true });
+    await rm3(join3(root, id), { recursive: true, force: true });
   }
   async function sweep(now = Date.now()) {
     for (const meta of [...metas.values()]) {
@@ -1870,7 +1907,7 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
     created: device.created,
     seenAt: device.seenAt ?? null,
     current: device.id === current,
-    code: device.status === "pending" ? device.code : void 0
+    ...device.status === "pending" ? { code: device.code } : {}
   });
   async function enroll(person, { pub, name: name2 }) {
     let devicePub;
@@ -1919,7 +1956,17 @@ ${id}`, b642.decode(name2)));
     const device = store.device(id);
     if (device === null) throw fail(404, "no such device");
     if (device.status === "approved") return deviceView(device);
-    return deviceView(await store.setDevice(id, { status: "approved", approvedAt: Date.now(), approvedBy: by, code: void 0 }));
+    const { code: _code, ...rest } = device;
+    return deviceView(await store.putDevice({ ...rest, status: "approved", approvedAt: Date.now(), approvedBy: by }));
+  }
+  async function decide({ device: id, code, choice, person, by }) {
+    const device = store.device(String(id));
+    if (device === null || device.status !== "pending") return { applied: false, reason: "not pending" };
+    if (device.code !== code) return { applied: false, reason: "code does not match" };
+    if (person !== void 0 && person !== device.person) return { applied: false, reason: "not this person" };
+    if (choice === "yes") return { applied: true, device: await approve(device.id, by ?? "outside") };
+    await store.dropDevice(device.id);
+    return { applied: true, removed: device.id };
   }
   const operations = {
     status: ({ device, person }) => ({ status: device.status, assistantName: config.assistantName, person: { id: person.id, name: person.name }, device: { id: device.id, name: device.name } }),
@@ -1930,6 +1977,7 @@ ${id}`, b642.decode(name2)));
       items: store.itemsFor(person.id).map(itemView),
       folders: store.foldersFor(person.id),
       uploads: uploads.listFor(device),
+      pending: store.devicesOf(person.id).filter((d) => d.status === "pending").map((d) => deviceView(d, device.id)),
       limits: { maxFileBytes: limits.maxFileBytes },
       previews: previews.available(),
       version: store.version
@@ -1970,6 +2018,12 @@ ${id}`, b642.decode(name2)));
       if (other === null || other.person !== person.id) throw fail(404, "no such device");
       return approve(other.id, device.id);
     },
+    "device.reject": async ({ person, args }) => {
+      const other = store.device(String(args.id));
+      if (other === null || other.person !== person.id || other.status !== "pending") throw fail(404, "no such device");
+      await store.dropDevice(other.id);
+      return {};
+    },
     "device.remove": async ({ person, args }) => {
       const other = store.device(String(args.id));
       if (other === null || other.person !== person.id) throw fail(404, "no such device");
@@ -1997,6 +2051,7 @@ ${id}`, b642.decode(name2)));
     previews,
     enroll,
     approve,
+    decide,
     notify,
     itemView,
     deviceView,
@@ -2009,14 +2064,14 @@ ${id}`, b642.decode(name2)));
       if (context.device.status !== "approved" && op !== "status") throw fail(403, "not-approved");
       return handler({ ...context, args: context.args ?? {} });
     },
-    itemsDir: join3(stateDir, "items")
+    itemsDir: join4(stateDir, "items")
   };
 }
 
 // index.js
 var name = "dsh-sealed-files";
 var inject = ["webServer", "connection"];
-var VERSION = (() => {
+function version() {
   for (const relative of ["./package.json", "../package.json"]) {
     try {
       const manifest = JSON.parse(readFileSync3(new URL(relative, import.meta.url), "utf8"));
@@ -2025,7 +2080,7 @@ var VERSION = (() => {
     }
   }
   return "0.0.0";
-})();
+}
 var expand = (path) => resolve3(path.replace(/^~(?=$|\/)/, homedir()));
 var DAY_MS = 864e5;
 function apply(ctx, config) {
@@ -2034,10 +2089,11 @@ function apply(ctx, config) {
   ctx.provide?.("sealedFiles", Object.freeze({ service: () => current }));
   ctx.effect(() => {
     const stateDir = expand(config.stateDir);
-    const identityFile = config.identityFile === "" ? join4(stateDir, "identity.txt") : expand(config.identityFile);
+    const identityFile = config.identityFile === "" ? join5(stateDir, "identity.txt") : expand(config.identityFile);
     const peopleFile = config.peopleFile === "" ? "" : expand(config.peopleFile);
     let stopped = false;
     let timer;
+    let stopDecisions;
     const starting = createService({
       config: { ...config, peopleFile },
       limits: limitsOf(config),
@@ -2049,6 +2105,7 @@ function apply(ctx, config) {
     }).then(async (service) => {
       if (stopped) return;
       current = service;
+      stopDecisions = await followDecisions({ stateDir, decide: service.decide, logger });
       const sweep = async () => {
         const next = await service.store.sweep().catch((error) => {
           logger.warn("sweep failed: %s", error.message);
@@ -2061,7 +2118,7 @@ function apply(ctx, config) {
       };
       await sweep();
     }).catch((error) => logger.warn("could not start: %s", error.message));
-    const routes = createApiRoutes({ service: () => current, identity: () => ctx.get("requestIdentity"), version: VERSION }).map((route) => ctx.connection.fetch.register(route));
+    const routes = createApiRoutes({ service: () => current, identity: () => ctx.get("requestIdentity"), version }).map((route) => ctx.connection.fetch.register(route));
     const disposeHttp = ctx.webServer.register({ kind: "prefix", path: ROUTE, handler: createAppHandler({ connection: ctx.connection }) });
     return async () => {
       stopped = true;
@@ -2069,6 +2126,7 @@ function apply(ctx, config) {
       disposeHttp();
       await Promise.all(routes.map((dispose) => dispose()));
       await starting;
+      await stopDecisions?.();
       await current?.store.flush();
       current = void 0;
     };

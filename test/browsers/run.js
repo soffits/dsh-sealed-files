@@ -181,11 +181,17 @@ async function main() {
     const frame = frameOf(d)
     await frame.getByRole('button', { name: 'Add this device' }).click()
     const deskCode = (await frame.locator('.code').textContent()).trim()
-    await p.getByRole('button', { name: 'Devices' }).click()
-    await p.locator('.devices li', { hasText: deskCode }).getByRole('button', { name: 'Approve' }).click()
+
+    // The phone shows the waiting desktop on its own, with its code.
+    const banner = p.locator('.banner', { hasText: deskCode })
+    await banner.waitFor({ timeout: 10_000 })
+    if (shots) await p.screenshot({ path: join(shots, 'phone-new-device.png') })
+    await banner.getByRole('button', { name: 'Approve' }).click()
+    await p.locator('.sheet-wrap .code', { hasText: deskCode }).waitFor()
+    if (shots) await p.screenshot({ path: join(shots, 'phone-approve-check.png') })
     await p.locator('.sheet-wrap').last().getByRole('button', { name: 'Approve' }).click()
     await frame.getByRole('button', { name: 'New' }).waitFor({ timeout: 10_000 })
-    await p.getByRole('button', { name: 'Close' }).click()
+    await banner.waitFor({ state: 'detached' })
     log('desktop approved from the phone')
 
     // The download is the file, byte for byte.
