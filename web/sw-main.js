@@ -9,6 +9,9 @@
 import { CHUNK, CHUNK_CT, cipherSpan, openChunk, payloadKey } from './age.js'
 import { b64 } from './seal.js'
 import { api, call, idb, loadDevice } from './device.js'
+import { BUS } from './bus.js'
+
+const bus = new BroadcastChannel(BUS)
 
 const STREAM = '/sealed-files/app/stream/'
 /** Types shown in place; anything else is only ever downloaded, so no file can run as a page of this origin. */
@@ -74,11 +77,24 @@ async function answer(request, url, id) {
   if (asked !== null) headers['content-range'] = `bytes ${start}-${end}/${size}`
   if (request.method === 'HEAD') return new Response(null, { status: asked ? 206 : 200, headers })
   // Not tied to the request's signal: a navigation that turns into a download ends that signal while the download goes on.
-  return new Response(plaintext(device, id, entry, start, end), { status: asked ? 206 : 200, headers })
+  const report = download ? downloadReport(`dl-${id}-${Date.now()}`, name, end - start + 1) : null
+  return new Response(plaintext(device, id, entry, start, end, report), { status: asked ? 206 : 200, headers })
 }
 
 /** Plaintext bytes [start, end] as a stream, fetched and decrypted a chunk at a time. */
-function plaintext(device, id, entry, start, end) {
+/** A download's progress on the bus, for the transfers card: every 16 chunks and at the end. */
+function downloadReport(key, name, size) {
+  let sent = 0
+  let count = 0
+  const post = status => bus.postMessage({ type: 'download', job: { key, name, size, sent, status, kind: 'download', done: status === 'done' ? Date.now() : null } })
+  post('sending')
+  return {
+    add(bytes) { sent += bytes; if (++count % 16 === 0) post('sending') },
+    end(ok) { post(ok ? 'done' : 'failed') },
+  }
+}
+
+function plaintext(device, id, entry, start, end, report) {
   const span = cipherSpan(entry.payloadAt, entry.size, start, end)
   let reader
   let buffer = new Uint8Array(0)
@@ -88,6 +104,7 @@ function plaintext(device, id, entry, start, end) {
     const from = index === span.first ? start - index * CHUNK : 0
     const to = index === span.last ? end - index * CHUNK + 1 : plain.length
     controller.enqueue(plain.subarray(from, to))
+    report?.add(to - from)
     index++
   }
   return new ReadableStream({
@@ -102,14 +119,15 @@ function plaintext(device, id, entry, start, end) {
         if (whole !== null && buffer.length >= whole) {
           take(controller, buffer.subarray(0, whole))
           buffer = buffer.subarray(whole)
-          if (index > span.last) { controller.close(); reader.cancel().catch(() => {}) }
+          if (index > span.last) { controller.close(); report?.end(true); reader.cancel().catch(() => {}) }
           return
         }
         const { value, done } = await reader.read()
         if (done) {
           if (index === span.final && index <= span.last) take(controller, buffer)
-          else if (index <= span.last) throw new Error('file ended early')
+          else if (index <= span.last) { report?.end(false); throw new Error('file ended early') }
           controller.close()
+          report?.end(true)
           return
         }
         const joined = new Uint8Array(buffer.length + value.length)
@@ -118,6 +136,6 @@ function plaintext(device, id, entry, start, end) {
         buffer = joined
       }
     },
-    cancel() { reader?.cancel().catch(() => {}) },
+    cancel() { report?.end(false); reader?.cancel().catch(() => {}) },
   })
 }

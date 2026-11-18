@@ -22,9 +22,9 @@ export function resumeKey(device, file, space, folder) {
 
 /**
  * Send `file` (a File or Blob with a name) to `space`/`folder`. `onProgress(sentBytes, totalBytes)`.
- * Resolves with the new item; rejects after repeated failures (the upload stays resumable) or when `signal` aborts.
+ * `keep` is stored with the resume record (a file handle, say). Resolves with the new item; rejects after repeated failures (the upload stays resumable) or when `signal` aborts.
  */
-export async function upload(device, file, { space, folder, kind = 'file', onProgress = () => {}, signal }) {
+export async function upload(device, file, { space, folder, kind = 'file', keep = {}, onProgress = () => {}, signal }) {
   const key = resumeKey(device, file, space, folder)
   let record = await idb.get('uploads', key)
   let state = null
@@ -47,7 +47,7 @@ export async function upload(device, file, { space, folder, kind = 'file', onPro
     nonce = random(NONCE_BYTES)
     const prefix = concat(encodeHeader(fileKey, b64.decode(device.assistantPub)), nonce)
     state = await call(device, 'upload.start', { space, folder, size: file.size, prefix: b64.encode(prefix) })
-    record = { id: state.id, fileKey: b64.encode(await sealLocal(device, state.id, fileKey)), nonce: b64.encode(nonce), name: file.name, size: file.size, space, folder, created: Date.now() }
+    record = { ...keep, id: state.id, fileKey: b64.encode(await sealLocal(device, state.id, fileKey)), nonce: b64.encode(nonce), name: file.name, size: file.size, space, folder, kind, created: Date.now() }
     await idb.put('uploads', key, record)
   }
   const pkey = payloadKey(fileKey, nonce)

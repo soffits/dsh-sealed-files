@@ -1,0 +1,24 @@
+/* The transfers card (web/card.js), on DSH's pages and the panel's own tab alike. */
+.sfc { position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; width: 360px; max-height: min(60vh, 420px); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #18181b); border: 1px solid var(--dsw-alias-border-l2, #d4d4d8); border-radius: 14px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .18); font: 13px/1.45 var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif); }
+.sfc[hidden] { display: none; }
+.sfc button { font: inherit; color: inherit; cursor: pointer; }
+.sfc-head { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 14px; }
+.sfc-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 6px 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfc-icon { flex: none; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: var(--dsw-alias-label-secondary, #52525b); }
+.sfc-icon:hover, .sfc-btn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, .05)); }
+.sfc-rows { list-style: none; margin: 0; padding: 0 6px 8px; overflow: auto; }
+.sfc-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; }
+.sfc-what { flex: 1; min-width: 0; }
+.sfc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfc-sub { color: var(--dsw-alias-label-tertiary, #8b8b93); font-size: 12px; }
+.sfc-failed .sfc-sub { color: var(--dsw-alias-state-error-primary, #e5484d); }
+.sfc-bar { height: 3px; margin-top: 4px; border-radius: 2px; background: var(--dsw-alias-border-l1, #e4e4e7); overflow: hidden; }
+.sfc-bar i { display: block; height: 100%; background: var(--dsw-alias-state-business-primary, #4d6bfe); transition: width .3s; }
+.sfc-done .sfc-bar i { background: var(--dsw-alias-state-success-primary, #30a46c); }
+.sfc-btn { flex: none; border: 1px solid var(--dsw-alias-border-l2, #d4d4d8); border-radius: 999px; background: none; padding: 4px 10px; white-space: nowrap; }
+@media (max-width: 640px) {
+  .sfc { left: 8px; right: 8px; width: auto; bottom: calc(92px + env(safe-area-inset-bottom)); border-radius: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .sfc-bar i { transition: none; } }

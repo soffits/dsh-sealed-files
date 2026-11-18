@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Uploads keep going when you leave the panel or move around DSH: they run in a worker the DSH page keeps.
+- A transfers card in the corner of every page (a strip on phones) shows uploads and downloads with progress and time left; the sidebar entry gets a progress ring.
+- In Chromium browsers an upload picks itself up after a reload or a closed tab; elsewhere the card says what was sent is kept and picking the same file goes on from there. Leaving the page warns only while an upload couldn't resume by itself.
+
 ## 0.2.0
 
 - A device already added shows a new one waiting, with its code, and approves or rejects it right there. While one waits, the Devices button turns accent with a count and the sidebar entry gets a badge, both live.
