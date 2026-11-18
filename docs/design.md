@@ -23,7 +23,7 @@ Trusted: the DSH host (it holds the assistant's key and can read everything) and
 - **Decrypted files never run as pages of this origin.** The worker only serves images, video, audio, PDF and plain text inline (with a sandbox CSP, except PDF, which browsers' viewers refuse to render sandboxed); everything else is an attachment.
 - **Downloads are a navigation of a hidden frame to the worker's URL** (answered as an attachment), so the browser's own downloader takes the decrypted stream; `<a download>` to a worker-served URL is cancelled by Chromium.
 - **People come from data**: the `requestIdentity` service of a sign-in plugin and a mapping file, the same shape other plugins use. Spaces derive from it.
-- **Pairing codes go out through a configured command**, so the channel (a chat app outside the web proxy) is the deployment's choice.
+- **Pairing needs no model.** A device already added approves a new one in its own panel (the main path). For a first device, a configured command sends the code with a yes and a no over a channel outside the web proxy, and the answer comes back as a decision file (`dsh-sealed-files-decide`), applied only while that device is pending with that code. The assistant's tool can list and remove devices but not approve them.
 - **Office previews** use DSH's `officeToPdf` service when present; the PDF is stored as an item derived from the file, encrypted like any other, and removed with it.
 - **Live updates** follow a Server-Sent Events stream that carries only a version number; the page then fetches the sealed list.
 

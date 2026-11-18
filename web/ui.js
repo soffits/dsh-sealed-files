@@ -121,13 +121,14 @@ export function ask({ title, label, value = '', confirm = t('ok') }) {
   })
 }
 
-/** Ask yes or no. */
-export function confirmed(text, yes = t('delete')) {
+/** Ask yes or no. `detail` is shown under the question; `tone` is the yes button's look (danger, primary). */
+export function confirmed(text, yes = t('delete'), { detail = null, tone = 'danger' } = {}) {
   return new Promise((done) => {
     let answered = false
     const s = sheet({ title: text, small: true, onClose: () => { if (!answered) done(false) } })
+    if (detail) s.body.append(detail)
     s.body.append(el('div', { class: 'actions' },
-      el('button', { class: 'btn danger', onclick: () => { answered = true; s.close(); done(true) } }, yes),
+      el('button', { class: `btn ${tone}`, onclick: () => { answered = true; s.close(); done(true) } }, yes),
       el('button', { class: 'btn', onclick: () => s.close() }, t('cancel'))))
   })
 }

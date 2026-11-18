@@ -20,8 +20,26 @@ window.__ModuleLoader__.load({
     const PANEL = 'dsh-sealed-files'
     const LINK_PARAM = 'sealed-files'
     const app = new URL('sealed-files/app/', document.baseURI).href
+    const api = path => new URL(`api/sealed-files/${path}`, document.baseURI).href
+    const STYLE_ID = 'dsh-sealed-files-style'
+    const CSS = '.sealed-files-icon{position:relative;display:inline-flex}.sealed-files-badge{position:absolute;top:-5px;right:-8px;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:9px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}'
+
+    /** How many of the signed-in person's devices wait for approval: the sidebar badge, followed live. */
+    const waiting = { count: 0, listeners: new Set() }
+    const setWaiting = (count) => {
+      if (count === waiting.count) return
+      waiting.count = count
+      for (const listener of waiting.listeners) listener()
+    }
+    const subscribeWaiting = (listener) => { waiting.listeners.add(listener); return () => waiting.listeners.delete(listener) }
 
     function SidebarIcon({ size }) {
+      const count = React.useSyncExternalStore(subscribeWaiting, () => waiting.count)
+      return h('span', { className: 'sealed-files-icon' }, h(FolderGlyph, { size }),
+        count > 0 && h('span', { className: 'sealed-files-badge', 'aria-label': String(count) }, count > 9 ? '9+' : String(count)))
+    }
+
+    function FolderGlyph({ size }) {
       const stroke = { stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }
       return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true, focusable: 'false' },
         h('path', { d: 'M1.75 4.25c0-.69.56-1.25 1.25-1.25h3l1.3 1.5H13c.69 0 1.25.56 1.25 1.25v6.5c0 .69-.56 1.25-1.25 1.25H3c-.69 0-1.25-.56-1.25-1.25v-8Z', ...stroke }),
@@ -70,6 +88,25 @@ window.__ModuleLoader__.load({
             for (const dispose of disposers.reverse()) dispose()
           }
         }, 'sealed-files: entries')
+
+        ctx.effect(() => {
+          if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return () => {}
+          const tag = document.createElement('style')
+          tag.id = STYLE_ID
+          tag.textContent = CSS
+          document.head.appendChild(tag)
+          return () => tag.remove()
+        }, 'sealed-files: styles')
+
+        // The badge: read once, then again whenever the plugin's change stream says this person's devices changed.
+        ctx.effect(() => {
+          if (typeof EventSource !== 'function') return () => {}
+          const read = () => fetch(api('waiting'), { cache: 'no-store', credentials: 'same-origin' }).then(r => (r.ok ? r.json() : { count: 0 })).then(body => setWaiting(body.count ?? 0), () => {})
+          const source = new EventSource(api('events'), { withCredentials: true })
+          source.onopen = read
+          source.onmessage = (event) => { try { if (JSON.parse(event.data).devices) read() } catch { /* a beat */ } }
+          return () => source.close()
+        }, 'sealed-files: waiting devices')
 
         ctx.effect(() => {
           takeLink()

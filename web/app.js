@@ -104,7 +104,8 @@ function pendingScreen() {
   const code = pairingCode(b64.decode(state.device.pub), b64.decode(state.device.assistantPub))
   screen(t('enroll.title'), [
     el('label', { class: 'field' }, t('enroll.code'), el('div', { class: 'code', text: code })),
-    el('p', { text: t('enroll.wait', { assistant: assistantName() }) }),
+    el('p', { text: t('enroll.wait') }),
+    el('p', { text: t('enroll.waitChat') }),
     el('p', { class: 'sub', text: t('enroll.waiting') }),
     iosBrowserTab() && el('p', { text: t('enroll.homeScreen') }),
     el('button', { class: 'btn', onclick: async () => { await forgetDevice(); location.reload() } }, t('cancel')),
@@ -225,14 +226,34 @@ function draw() {
     el('h1', { text: t('title') }),
     el('div', { class: 'grow' }),
     embedded && el('a', { class: 'btn icon', href: './', target: '_blank', rel: 'noopener', title: t('openTab'), 'aria-label': t('openTab') }, icon('external')),
-    el('button', { class: 'btn icon', title: t('devices'), 'aria-label': t('devices'), onclick: () => openDevices(app) }, icon('devices')),
+    devicesButton(index.pending?.length ?? 0),
     newButton)
   const tabs = el('div', { class: 'tabs', role: 'tablist' }, index.spaces.map(space => el('button', { class: 'tab', role: 'tab', 'aria-selected': String(space.id === state.space), onclick: () => { state.space = space.id; state.folder = ''; draw() } }, spaceLabel(space))))
-  const main = el('main', {}, list, folders.length + items.length === 0 && el('div', { class: 'empty', text: state.folder === '' ? t('empty') : t('emptyFolder') }),
+  const waiting = (index.pending ?? []).map(device => el('div', { class: 'banner', role: 'status' },
+    el('div', { class: 'what' }, el('div', { class: 'name', text: t('pending.title', { name: device.name }) }), el('div', { class: 'sub', text: t('pending.text') })),
+    el('div', { class: 'code small', text: device.code }),
+    el('div', { class: 'actions' },
+      el('button', { class: 'btn primary', onclick: () => approveDevice(device) }, t('devices.approve')),
+      el('button', { class: 'btn', onclick: () => op('device.reject', { id: device.id }) }, t('devices.reject')))))
+  const main = el('main', {}, ...waiting, list, folders.length + items.length === 0 && el('div', { class: 'empty', text: state.folder === '' ? t('empty') : t('emptyFolder') }),
     el('div', { class: 'foot', text: t('version', { version: state.whoami.version }) }))
   clear(root)
   root.append(...[bar, tabs, state.folder !== '' && crumbs, main, fileInput, tray].filter(Boolean))
   drawTray()
+}
+
+/** The Devices button; while devices wait it takes the accent colour and their count, like an unread badge. */
+function devicesButton(waiting) {
+  const label = waiting > 0 ? `${t('devices')} · ${t('devices.waiting', { n: waiting })}` : t('devices')
+  return el('button', { class: `btn icon${waiting > 0 ? ' alert' : ''}`, title: label, 'aria-label': label, onclick: () => openDevices(app) },
+    icon('devices'), waiting > 0 && el('span', { class: 'badge', text: waiting > 9 ? '9+' : String(waiting) }))
+}
+
+async function approveDevice(device) {
+  const detail = el('div', {}, el('p', { text: t('devices.approveCheck', { name: device.name }) }), el('div', { class: 'code', text: device.code }))
+  if (!(await confirmed(t('devices.approveTitle'), t('devices.approve'), { detail, tone: 'primary' }))) return false
+  await op('device.approve', { id: device.id })
+  return true
 }
 
 function open(item) {
@@ -355,6 +376,7 @@ const app = {
   spaceLabel,
   assistantName,
   closedItem: () => { state.openId = null },
+  approveDevice,
   refresh,
   async moveItem(item) {
     const choices = state.index.spaces.flatMap(space => ['', ...(state.index.folders[space.id] ?? [])].map(folder => ({ space: space.id, folder, label: `${spaceLabel(space)}${folder ? ` / ${folder}` : ''}` })))

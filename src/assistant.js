@@ -104,7 +104,6 @@ export function createAssistant({ service, outDir, origin }) {
       const persons = person ? [person] : service.people.all().map(p => p.id)
       return persons.flatMap(id => store.devicesOf(id).map(device => ({ person: id, ...service.deviceView(device) })))
     },
-    approve: async ({ device }) => service.approve(String(device), ASSISTANT),
     revoke: async ({ device }) => { await store.dropDevice(String(device)); return { removed: device } },
   }
 }

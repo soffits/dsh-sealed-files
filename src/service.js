@@ -65,7 +65,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
     created: device.created,
     seenAt: device.seenAt ?? null,
     current: device.id === current,
-    code: device.status === 'pending' ? device.code : undefined,
+    ...(device.status === 'pending' ? { code: device.code } : {}),
   })
 
   /** A new device asks to be added: `pub` is its X25519 key, `name` sealed under the pair key. */
@@ -118,7 +118,22 @@ export async function createService({ config, limits, stateDir, identityFile, of
     const device = store.device(id)
     if (device === null) throw fail(404, 'no such device')
     if (device.status === 'approved') return deviceView(device)
-    return deviceView(await store.setDevice(id, { status: 'approved', approvedAt: Date.now(), approvedBy: by, code: undefined }))
+    const { code: _code, ...rest } = device
+    return deviceView(await store.putDevice({ ...rest, status: 'approved', approvedAt: Date.now(), approvedBy: by }))
+  }
+
+  /**
+   * A yes or no to a pending device from outside the Web page being paired (a chat button, a command): it counts
+   * only for the device and code it names, for that person, while the device is still pending.
+   */
+  async function decide({ device: id, code, choice, person, by }) {
+    const device = store.device(String(id))
+    if (device === null || device.status !== 'pending') return { applied: false, reason: 'not pending' }
+    if (device.code !== code) return { applied: false, reason: 'code does not match' }
+    if (person !== undefined && person !== device.person) return { applied: false, reason: 'not this person' }
+    if (choice === 'yes') return { applied: true, device: await approve(device.id, by ?? 'outside') }
+    await store.dropDevice(device.id)
+    return { applied: true, removed: device.id }
   }
 
   /** The operations a device runs through its sealed channel. */
@@ -131,6 +146,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
       items: store.itemsFor(person.id).map(itemView),
       folders: store.foldersFor(person.id),
       uploads: uploads.listFor(device),
+      pending: store.devicesOf(person.id).filter(d => d.status === 'pending').map(d => deviceView(d, device.id)),
       limits: { maxFileBytes: limits.maxFileBytes },
       previews: previews.available(),
       version: store.version,
@@ -171,6 +187,12 @@ export async function createService({ config, limits, stateDir, identityFile, of
       if (other === null || other.person !== person.id) throw fail(404, 'no such device')
       return approve(other.id, device.id)
     },
+    'device.reject': async ({ person, args }) => {
+      const other = store.device(String(args.id))
+      if (other === null || other.person !== person.id || other.status !== 'pending') throw fail(404, 'no such device')
+      await store.dropDevice(other.id)
+      return {}
+    },
     'device.remove': async ({ person, args }) => {
       const other = store.device(String(args.id))
       if (other === null || other.person !== person.id) throw fail(404, 'no such device')
@@ -199,6 +221,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
     previews,
     enroll,
     approve,
+    decide,
     notify,
     itemView,
     deviceView,

@@ -12,14 +12,15 @@ import { readFileSync } from 'node:fs'
 import { createApiRoutes } from './src/api.js'
 import { ROUTE, createAppHandler } from './src/app.js'
 import { Config, limitsOf } from './src/config.js'
+import { followDecisions } from './src/decisions.js'
 import { createService } from './src/service.js'
 
 export const name = 'dsh-sealed-files'
 export const inject = ['webServer', 'connection']
 export { Config }
 
-/** This package's version, from its manifest (one level up once built into dist/). */
-const VERSION = (() => {
+/** This package's version, read from its manifest when asked (one level up once built into dist/). */
+function version() {
   for (const relative of ['./package.json', '../package.json']) {
     try {
       const manifest = JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'))
@@ -27,7 +28,7 @@ const VERSION = (() => {
     } catch { /* try the next */ }
   }
   return '0.0.0'
-})()
+}
 const expand = path => resolve(path.replace(/^~(?=$|\/)/, homedir()))
 const DAY_MS = 86_400_000
 
@@ -43,6 +44,7 @@ export function apply(ctx, config) {
     const peopleFile = config.peopleFile === '' ? '' : expand(config.peopleFile)
     let stopped = false
     let timer
+    let stopDecisions
     const starting = createService({
       config: { ...config, peopleFile },
       limits: limitsOf(config),
@@ -54,6 +56,7 @@ export function apply(ctx, config) {
     }).then(async (service) => {
       if (stopped) return
       current = service
+      stopDecisions = await followDecisions({ stateDir, decide: service.decide, logger })
       // The clock changes what exists here only when something expires: sleep until then (at most a day).
       const sweep = async () => {
         const next = await service.store.sweep().catch(error => { logger.warn('sweep failed: %s', error.message); return null })
@@ -64,7 +67,7 @@ export function apply(ctx, config) {
       await sweep()
     }).catch(error => logger.warn('could not start: %s', error.message))
 
-    const routes = createApiRoutes({ service: () => current, identity: () => ctx.get('requestIdentity'), version: VERSION })
+    const routes = createApiRoutes({ service: () => current, identity: () => ctx.get('requestIdentity'), version })
       .map(route => ctx.connection.fetch.register(route))
     const disposeHttp = ctx.webServer.register({ kind: 'prefix', path: ROUTE, handler: createAppHandler({ connection: ctx.connection }) })
 
@@ -74,6 +77,7 @@ export function apply(ctx, config) {
       disposeHttp()
       await Promise.all(routes.map(dispose => dispose()))
       await starting
+      await stopDecisions?.()
       await current?.store.flush()
       current = undefined
     }

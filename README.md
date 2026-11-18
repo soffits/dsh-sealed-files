@@ -6,12 +6,12 @@ End-to-end encrypted files and notes for [DeepSeek Harness](https://github.com/d
 - Videos stream and seek, pictures, PDFs, audio and text open in place, all decrypted on the device as they are read. Office files get a PDF preview through DSH's own converter when it is there.
 - Notes: write or paste text, copy it back out.
 - A small folder tree in each space. Each person has their own space, and everyone shares one.
-- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files and notes in, manage devices.
+- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files and notes in, list and remove devices.
 - Every stored file is a standard [age](https://age-encryption.org) file encrypted to the assistant's key: `age -d -i identity.txt items/<id>.age` opens it without this plugin.
 
 ## How the encryption works
 
-Each browser makes its own X25519 key with Web Crypto, marked non-extractable, so it never leaves the device. The assistant has one age X25519 identity on the DSH host. When a device is added, it shows a 12-character pairing code computed from both public keys; the assistant sends the same code to that person over a channel you configure (a chat app that does not go through your web proxy), and the person confirms that the two match. After that:
+Each browser makes its own X25519 key with Web Crypto, marked non-extractable, so it never leaves the device. The assistant has one age X25519 identity on the DSH host. When a device is added, it shows a 12-character pairing code computed from both public keys. The person compares it with the same code shown on a device they already added, or sent to them over a channel outside your web proxy, and says yes there. After that:
 
 - Uploads are age files encrypted in the browser to the assistant's pinned key. The page cuts the payload into parts of 128 age chunks (8 MiB), each checked by the host as it arrives.
 - The X25519 secret a device shares with the assistant gives one AES-256-GCM key. Every request and answer that means anything (the file list, names, file keys, folder and device changes) is sealed with it, bound to a fresh nonce, so the proxy sees neither content nor names nor which operation was asked for, and cannot forge, replay or reorder them.
@@ -51,7 +51,7 @@ Override the `sealed-files` row in your profile's `cordis.patch.yml`:
 | `identityFile` | `<stateDir>/identity.txt` | The assistant's age identity. Made with mode 600 on first start when missing. Back it up: without it nothing here can be read. |
 | `people`, `peopleFile`, `peopleKey` | | Sign-in id → person. A person's id is their name in lower case; each gets a space of their own. |
 | `sharedSpace` | `true` | A space everyone sees. |
-| `notifyCommand` | none | Run when a device asks to be added, with one JSON line on stdin: `{ "event": "device-pending", "person", "personName", "device": { "id", "name" }, "code" }`. Send the code to that person. |
+| `notifyCommand` | none | Run when a device asks to be added, with one JSON line on stdin: `{ "event": "device-pending", "person", "personName", "device": { "id", "name" }, "code" }`. Send the code to that person with a yes and a no; answers come back through `dsh-sealed-files-decide`. |
 | `assistantName` | | Shown as the sender of what the assistant puts in and on the pairing screen. |
 | `maxFileGb`, `maxStoreGb`, `minFreeGb` | 4, 10, 6 | One upload's limit, the store's limit, and the free disk space an upload must leave. |
 | `retentionDays` | 30 | Files are deleted this long after they arrive unless pinned. |
@@ -64,9 +64,18 @@ A link to `/?sealed-files=<id>` opens the panel on that item.
 
 ## Adding a device
 
-1. Open the panel on the device and press **Add this device**. It shows a pairing code.
-2. The person gets the same code from the assistant through `notifyCommand`. If the two match, they tell the assistant there, and it approves the device with its tool. A device the person already added can approve the new one too (Devices).
-3. On iPhone and iPad, open DSH from the Home Screen. Safari deletes a site's storage after seven days without a visit, and with it the device key; the Home Screen app keeps its own. A device that lost its key is simply added again; no file is lost, since files are stored for the assistant, not for a device.
+1. Open the panel on the new device and press **Add this device**. It shows a pairing code.
+2. On a device the person already added, the panel shows the new one with the same code and **Approve** / **Reject**. Approve only when the codes match.
+3. For the first device, or with no other device at hand, `notifyCommand` gets the code. Send it to the person over a channel that doesn't pass through your web proxy, with a yes and a no they can answer there. Feed the answer back with `dsh-sealed-files-decide`:
+
+   ```sh
+   dsh-sealed-files-decide --state-dir ~/sealed-files --device <id> --code <code> --yes   # or --no
+   dsh-sealed-files-decide --state-dir ~/sealed-files --event < event.json                # a dsh-cron-jobs command job's stdin
+   ```
+
+   It writes a decision file into `<stateDir>/decisions/`, which the plugin takes while that device is still pending with that code, also after a restart. No model is involved anywhere in pairing.
+
+On iPhone and iPad, open DSH from the Home Screen. Safari deletes a site's storage after seven days without a visit, and with it the device key; the Home Screen app keeps its own. A device that lost its key is simply added again; no file is lost, since files are stored for the assistant, not for a device.
 
 ## Browser support
 

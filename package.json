@@ -1,6 +1,6 @@
 {
   "name": "@soffits/dsh-sealed-files",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "End-to-end encrypted files and text for DeepSeek Harness: a panel in the Web UI where files are encrypted in the browser, streamed and previewed with seeking, and shared between the people you let in and your assistant.",
   "type": "module",
   "license": "MIT",
@@ -33,6 +33,7 @@
   },
   "files": [
     "dist/*",
+    "bin/*.js",
     "client.js",
     "web/*",
     "cordis.patch.yml",
@@ -59,7 +60,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "for f in index.js tools.js client.js scripts/*.mjs src/*.js web/*.js test/*.js; do node --check \"$f\" || exit 1; done",
+    "check": "for f in index.js tools.js client.js scripts/*.mjs src/*.js web/*.js test/*.js bin/*.js; do node --check \"$f\" || exit 1; done",
     "test": "node --test test/*.test.js",
     "test:browsers": "node scripts/build.mjs && node test/browsers/run.js"
   },
@@ -76,5 +77,8 @@
     "age-encryption": "^0.3.1",
     "esbuild": "^0.28.2",
     "playwright-core": "^1.65.1"
+  },
+  "bin": {
+    "dsh-sealed-files-decide": "./bin/dsh-sealed-files-decide.js"
   }
 }

@@ -7,6 +7,7 @@
  *   POST /api/sealed-files/call     every other operation, sealed both ways with the device's pair key
  *   POST /api/sealed-files/part     ?d=&u=&n=  one encrypted upload part, streamed
  *   GET  /api/sealed-files/blob     ?d=&id=    an item's ciphertext, with Range
+ *   GET  /api/sealed-files/waiting  how many of this person's devices wait to be approved (for the sidebar badge)
  *   GET  /api/sealed-files/events   a Server-Sent Events stream: "something you see changed"
  *
  * In plain text these carry only public keys, random ids, sizes and
@@ -27,6 +28,7 @@ const json = (status, body) => new Response(JSON.stringify(body), { status, head
 const refuse = (status, code) => json(status, { error: code })
 
 export function createApiRoutes({ service, identity, version }) {
+  // `version()` is read per request, so an update in place reports itself at once.
   const seen = new Map()
 
   /** A nonce is good once within the window. */
@@ -64,7 +66,14 @@ export function createApiRoutes({ service, identity, version }) {
     }
   }
 
-  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version }))
+  const whoami = guarded(async (request, svc) => json(200, { mapped: personOf(svc) !== null, assistant: { pub: b64.encode(svc.identity.pub), recipient: svc.identity.recipient }, version: version() }))
+
+  // A count only: that a device asked to join is plain on the wire already (its enrollment request).
+  const waiting = guarded(async (request, svc) => {
+    const person = personOf(svc)
+    if (person === null) return json(200, { count: 0 })
+    return json(200, { count: svc.store.devicesOf(person.id).filter(d => d.status === 'pending').length })
+  })
 
   const enroll = guarded(async (request, svc) => {
     const person = personOf(svc)
@@ -154,6 +163,7 @@ export function createApiRoutes({ service, identity, version }) {
 
   return [
     { path: `${API}/whoami`, methods: ['GET'], requestBody: 'buffered', fetch: whoami },
+    { path: `${API}/waiting`, methods: ['GET'], requestBody: 'buffered', fetch: waiting },
     { path: `${API}/enroll`, methods: ['POST'], requestBody: 'buffered', fetch: enroll },
     { path: `${API}/call`, methods: ['POST'], requestBody: 'buffered', fetch: call },
     { path: `${API}/part`, methods: ['POST'], requestBody: 'streaming', fetch: part },

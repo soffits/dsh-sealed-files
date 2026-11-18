@@ -14,22 +14,19 @@ export function openDevices(app) {
 
   async function draw() {
     const devices = await app.op('devices')
-    const rank = device => (device.current ? 0 : device.status === 'pending' ? 1 : 2)
+    const rank = device => (device.status === 'pending' ? 0 : device.current ? 1 : 2)
     devices.sort((a, b) => rank(a) - rank(b) || b.created - a.created)
     list.replaceChildren(...devices.map(device => el('li', {},
       el('div', { class: 'what' },
         el('div', { text: device.current ? `${device.name} (${t('devices.this')})` : device.name }),
         el('div', { class: 'sub', text: device.status === 'pending' ? `${t('devices.pending')} · ${t('devices.code', { code: device.code })}` : (device.seenAt ? t('devices.seen', { when: when(device.seenAt) }) : t('devices.added', { when: when(device.created) })) })),
-      device.status === 'pending' && el('button', { class: 'btn primary', onclick: async () => {
-        if (!(await confirmed(t('devices.approveCheck', { name: device.name, code: device.code }), t('devices.approve')))) return
-        await app.op('device.approve', { id: device.id })
-        draw()
-      } }, t('devices.approve')),
+      device.status === 'pending' && el('button', { class: 'btn primary', onclick: async () => { if (await app.approveDevice(device)) draw() } }, t('devices.approve')),
+      device.status === 'pending' && el('button', { class: 'btn', onclick: async () => { await app.op('device.reject', { id: device.id }); draw() } }, t('devices.reject')),
       device.current && el('button', { class: 'btn icon', title: t('rename'), 'aria-label': t('rename'), onclick: async () => {
         const name = await ask({ title: t('rename'), label: t('name'), value: device.name })
         if (name) { await app.op('device.rename', { id: device.id, name }); draw() }
       } }, icon('edit')),
-      el('button', { class: 'btn icon danger', title: t('devices.remove'), 'aria-label': t('devices.remove'), onclick: async () => {
+      device.status !== 'pending' && el('button', { class: 'btn icon danger', title: t('devices.remove'), 'aria-label': t('devices.remove'), onclick: async () => {
         if (!(await confirmed(t('devices.confirmRemove', { name: device.name }), t('devices.remove')))) return
         await app.op('device.remove', { id: device.id })
         if (device.current) { await forgetDevice(); location.reload(); return }
