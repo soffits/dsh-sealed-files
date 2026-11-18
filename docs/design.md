@@ -27,6 +27,11 @@ Trusted: the DSH host (it holds the assistant's key and can read everything) and
 - **Office previews** use DSH's `officeToPdf` service when present; the PDF is stored as an item derived from the file, encrypted like any other, and removed with it.
 - **Live updates** follow a Server-Sent Events stream that carries only a version number; the page then fetches the sealed list.
 
+- **Transfers run in an engine the DSH page keeps** (`web/transfers.js`): a SharedWorker (one per browser; a dedicated worker started by the top page where SharedWorker is missing), fed over a BroadcastChannel, so an upload goes on when the person leaves the panel or moves around DSH. It holds a Web Lock while anything moves, so Chromium doesn't freeze the page, and is paced by the requests themselves, never by timers. A page holds its messages until the engine has answered once, since a BroadcastChannel drops messages sent before a listener exists.
+- **Resuming after a reload or a closed tab**: where the browser gives a file handle (Chromium's file picker and drag and drop), it is kept with the resume record and the upload continues without picking the file again (asking for permission once). Safari has no handles, so there the card says plainly that what was sent is kept and picking the same file goes on from there. A warning on leaving the page shows only while an upload runs that can't pick itself up again.
+- **Background Fetch is not used**: Chromium only, and it needs the bytes encrypted before the fetch starts, which means holding the whole ciphertext.
+- **The transfers card is plain DOM on the page's body** (`web/card.js`, `web/card.css`), shared by the DSH page and the panel's own tab, since DSH has no slot for an overlay across pages; downloads report from the service worker on the same channel.
+
 ## Later
 
 - The browser extension build of `web/`.

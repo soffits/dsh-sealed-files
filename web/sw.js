@@ -1719,7 +1719,11 @@ ${nonce}`;
     return answer2.result;
   }
 
+  // web/bus.js
+  var BUS = "sealed-files";
+
   // web/sw-main.js
+  var bus = new BroadcastChannel(BUS);
   var STREAM = "/sealed-files/app/stream/";
   var INLINE = /^(image\/(png|jpeg|gif|webp|avif|heic|heif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)$/;
   var keys = /* @__PURE__ */ new Map();
@@ -1775,9 +1779,25 @@ ${nonce}`;
     headers["content-length"] = String(end - start + 1);
     if (asked !== null) headers["content-range"] = `bytes ${start}-${end}/${size}`;
     if (request.method === "HEAD") return new Response(null, { status: asked ? 206 : 200, headers });
-    return new Response(plaintext(device, id, entry, start, end), { status: asked ? 206 : 200, headers });
+    const report = download ? downloadReport(`dl-${id}-${Date.now()}`, name, end - start + 1) : null;
+    return new Response(plaintext(device, id, entry, start, end, report), { status: asked ? 206 : 200, headers });
   }
-  function plaintext(device, id, entry, start, end) {
+  function downloadReport(key, name, size) {
+    let sent = 0;
+    let count = 0;
+    const post = (status) => bus.postMessage({ type: "download", job: { key, name, size, sent, status, kind: "download", done: status === "done" ? Date.now() : null } });
+    post("sending");
+    return {
+      add(bytes) {
+        sent += bytes;
+        if (++count % 16 === 0) post("sending");
+      },
+      end(ok) {
+        post(ok ? "done" : "failed");
+      }
+    };
+  }
+  function plaintext(device, id, entry, start, end, report) {
     const span = cipherSpan(entry.payloadAt, entry.size, start, end);
     let reader;
     let buffer = new Uint8Array(0);
@@ -1787,6 +1807,7 @@ ${nonce}`;
       const from = index === span.first ? start - index * CHUNK : 0;
       const to2 = index === span.last ? end - index * CHUNK + 1 : plain.length;
       controller.enqueue(plain.subarray(from, to2));
+      report?.add(to2 - from);
       index++;
     };
     return new ReadableStream({
@@ -1803,6 +1824,7 @@ ${nonce}`;
             buffer = buffer.subarray(whole);
             if (index > span.last) {
               controller.close();
+              report?.end(true);
               reader.cancel().catch(() => {
               });
             }
@@ -1811,8 +1833,12 @@ ${nonce}`;
           const { value, done } = await reader.read();
           if (done) {
             if (index === span.final && index <= span.last) take(controller, buffer);
-            else if (index <= span.last) throw new Error("file ended early");
+            else if (index <= span.last) {
+              report?.end(false);
+              throw new Error("file ended early");
+            }
             controller.close();
+            report?.end(true);
             return;
           }
           const joined = new Uint8Array(buffer.length + value.length);
@@ -1822,6 +1848,7 @@ ${nonce}`;
         }
       },
       cancel() {
+        report?.end(false);
         reader?.cancel().catch(() => {
         });
       }

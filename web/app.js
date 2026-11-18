@@ -11,7 +11,8 @@ import { followShellTheme } from './theme.js'
 import { ask, clear, confirmed, el, icon, iconFor, menu, sheet, toast } from './ui.js'
 import { openItem } from './item-view.js'
 import { openDevices } from './devices-view.js'
-import { cancelUpload, upload } from './upload.js'
+import { engineLink, startEngine } from './bus.js'
+import { mountCard } from './card.js'
 import { parentOf } from './protocol.js'
 
 const params = new URLSearchParams(location.hash.slice(1))
@@ -153,7 +154,6 @@ async function refresh() {
       if (!index.spaces.some(s => s.id === state.space)) state.space = index.spaces[0]?.id
       if (state.folder !== '' && !(index.folders[state.space] ?? []).includes(state.folder)) state.folder = ''
       await Promise.all(index.items.map(item => remember(item)))
-      state.localUploads = new Map((await idb.all('uploads')).map(record => [record.id, record]))
       draw()
       if (linkedItem) {
         const item = index.items.find(i => i.id === linkedItem)
@@ -218,7 +218,7 @@ function draw() {
     crumbs.append(el('span', { text: '/' }), el('button', { onclick: () => { state.folder = target; draw() } }, part))
   }
   const newButton = el('button', { class: 'btn primary', onclick: () => menu(newButton, [
-    { icon: 'upload', label: t('upload'), run: () => fileInput.click() },
+    { icon: 'upload', label: t('upload'), run: pickFiles },
     { icon: 'note', label: t('note'), run: writeNote },
     { icon: 'folder-plus', label: t('folder.new'), run: newFolder },
   ]) }, icon('plus'), t('new'))
@@ -238,8 +238,8 @@ function draw() {
   const main = el('main', {}, ...waiting, list, folders.length + items.length === 0 && el('div', { class: 'empty', text: state.folder === '' ? t('empty') : t('emptyFolder') }),
     el('div', { class: 'foot', text: t('version', { version: state.whoami.version }) }))
   clear(root)
-  root.append(...[bar, tabs, state.folder !== '' && crumbs, main, fileInput, tray].filter(Boolean))
-  drawTray()
+  root.append(...[bar, tabs, state.folder !== '' && crumbs, main, fileInput].filter(Boolean))
+  if (!embedded && card === null) card = mountCard({ t, bytes, onPick: (job) => { state.space = job.space; state.folder = job.folder; fileInput.click() } })
 }
 
 /** The Devices button; while devices wait it takes the accent colour and their count, like an unread badge. */
@@ -283,61 +283,40 @@ function writeNote() {
   setTimeout(() => text.focus(), 30)
 }
 
-// Uploads.
+// Uploads go to the transfer engine, which the DSH page keeps running (or this tab, when the panel has one of its own).
 
-const tray = el('div', { class: 'tray', 'aria-live': 'polite' })
-
-function sendFiles(files, kind = 'file') {
-  const space = state.space
-  const folder = state.folder
-  for (const file of files) {
-    if (file.size > state.index.limits.maxFileBytes) { toast(t('error.file-too-large', { max: bytes(state.index.limits.maxFileBytes) })); continue }
-    const job = { name: file.name, sent: 0, total: file.size, status: 'sending', error: null, controller: new AbortController(), file, space, folder, kind }
-    state.jobs.set(job, job)
-    run(job)
-  }
-  drawTray()
+const engine = engineLink()
+let card = null
+if (!embedded) {
+  startEngine(new URL('./', location.href))
+  window.addEventListener('beforeunload', (event) => {
+    if (!card?.wouldLose()) return
+    event.preventDefault()
+    event.returnValue = t('card.leave')
+  })
 }
 
-async function run(job) {
-  job.status = 'sending'
-  job.error = null
-  drawTray()
+/** Files to send, with their handles where the browser gives them (so an upload resumes on its own after a reload). */
+function sendFiles(files, kind = 'file', handles = []) {
+  const max = state.index.limits.maxFileBytes
+  const keep = files.map((file, i) => [file, handles[i] ?? null]).filter(([file]) => {
+    if (file.size <= max) return true
+    toast(t('error.file-too-large', { max: bytes(max) }))
+    return false
+  })
+  if (keep.length === 0) return
+  engine.send({ type: 'enqueue', files: keep.map(([f]) => f), handles: keep.map(([, h]) => h), space: state.space, folder: state.folder, kind })
+}
+
+async function pickFiles() {
+  if (typeof window.showOpenFilePicker !== 'function') return fileInput.click()
   try {
-    await upload(state.device, job.file, { space: job.space, folder: job.folder, kind: job.kind, signal: job.controller.signal, onProgress: (sent, total) => { job.sent = sent; job.total = total; drawTray() } })
-    job.status = 'done'
-    drawTray()
-    setTimeout(() => { state.jobs.delete(job); drawTray() }, 1500)
+    const handles = await window.showOpenFilePicker({ multiple: true })
+    sendFiles(await Promise.all(handles.map(h => h.getFile())), 'file', handles)
   } catch (error) {
-    if (job.controller.signal.aborted) { state.jobs.delete(job); drawTray(); return }
-    job.status = 'failed'
-    job.error = errorText(error)
-    drawTray()
+    if (error.name !== 'AbortError') fileInput.click()
   }
-}
-
-function drawTray() {
-  clear(tray)
-  const sending = new Set([...state.jobs.values()].map(job => job.name))
-  for (const job of state.jobs.values()) {
-    const percent = job.total === 0 ? 100 : Math.round((job.sent / job.total) * 100)
-    tray.append(el('div', { class: `job${job.status === 'failed' ? ' failed' : ''}` },
-      el('div', { class: 'top' },
-        el('span', { class: 'label', text: job.status === 'done' ? t('upload.done', { name: job.name }) : job.status === 'failed' ? t('upload.failed', { name: job.name, error: job.error }) : `${t('upload.sending', { name: job.name })} · ${percent}%` }),
-        job.status === 'failed' && el('button', { class: 'btn', onclick: () => { job.controller = new AbortController(); run(job) } }, t('upload.retry')),
-        job.status !== 'done' && el('button', { class: 'btn icon', title: t('upload.cancel'), 'aria-label': t('upload.cancel'), onclick: () => { job.controller.abort(); state.jobs.delete(job); drawTray() } }, icon('x'))),
-      el('div', { class: 'meter' }, el('i', { style: `width:${percent}%` }))))
-  }
-  // Unfinished uploads from an earlier visit: picking the same file again continues them.
-  for (const upload of state.index?.uploads ?? []) {
-    if (sending.size > 0) break
-    tray.append(el('div', { class: 'job' },
-      el('div', { class: 'top' },
-        el('span', { class: 'label', text: t('upload.resume', { name: `${state.localUploads?.get(upload.id)?.name ?? ''} (${bytes(upload.size)})` }) }),
-        el('button', { class: 'btn', onclick: () => { state.space = upload.space; state.folder = upload.folder; fileInput.click() } }, t('upload.pick')),
-        el('button', { class: 'btn icon', title: t('upload.cancel'), 'aria-label': t('upload.cancel'), onclick: () => cancelUpload(state.device, upload.id).then(refresh) }, icon('x'))),
-      el('div', { class: 'meter' }, el('i', { style: `width:${Math.round(((upload.parts - upload.missing.length) / upload.parts) * 100)}%` }))))
-  }
+  return undefined
 }
 
 // Dropping files anywhere on the page.
@@ -356,7 +335,13 @@ document.addEventListener('drop', (event) => {
   dropHint.remove()
   if (!state.index || !event.dataTransfer?.files.length) return
   event.preventDefault()
-  sendFiles([...event.dataTransfer.files])
+  const files = [...event.dataTransfer.files]
+  const items = [...event.dataTransfer.items].filter(item => item.kind === 'file')
+  if (items.length === files.length && typeof items[0]?.getAsFileSystemHandle === 'function') {
+    Promise.all(items.map(item => item.getAsFileSystemHandle())).then(handles => sendFiles(files, 'file', handles.map(h => (h?.kind === 'file' ? h : null))), () => sendFiles(files))
+  } else {
+    sendFiles(files)
+  }
 })
 // Pasting a file or text into the page.
 document.addEventListener('paste', (event) => {

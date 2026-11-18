@@ -1,6 +1,6 @@
 {
   "name": "@soffits/dsh-sealed-files",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "End-to-end encrypted files and text for DeepSeek Harness: a panel in the Web UI where files are encrypted in the browser, streamed and previewed with seeking, and shared between the people you let in and your assistant.",
   "type": "module",
   "license": "MIT",

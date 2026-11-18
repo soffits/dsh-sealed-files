@@ -18,6 +18,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createServer, request as httpRequest } from 'node:http'
 import { chromium } from 'playwright-core'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -54,6 +55,32 @@ function makeVideo(path, seconds) {
     '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '3M', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', '-movflags', '+faststart', path])
 }
 
+/**
+ * A proxy in front of DSH for one browser, so the test can drop any request on the way, also those a worker
+ * makes (which the browser automation can't intercept). `hook(url)` returns 'drop' to cut the connection.
+ */
+async function interruptingProxy(target) {
+  const to = new URL(target)
+  const seen = []
+  let hook = () => 'pass'
+  const server = createServer((req, res) => {
+    seen.push(req.url)
+    if (hook(req.url) === 'drop') { req.socket.destroy(); return }
+    const headers = { ...req.headers, host: to.host }
+    if (headers.origin) headers.origin = to.origin
+    const upstream = httpRequest({ host: to.hostname, port: to.port, path: req.url, method: req.method, headers }, (answer) => {
+      const out = { ...answer.headers }
+      if (out['content-security-policy']) out['content-security-policy'] = out['content-security-policy'].replaceAll(to.host, `127.0.0.1:${server.address().port}`)
+      res.writeHead(answer.statusCode, out)
+      answer.pipe(res)
+    })
+    upstream.on('error', () => res.destroy())
+    req.pipe(upstream)
+  })
+  await new Promise(done => server.listen(0, '127.0.0.1', done))
+  return { origin: `http://127.0.0.1:${server.address().port}`, seen, setHook: (fn) => { hook = fn }, close: () => server.close() }
+}
+
 async function device(browser, signIn, options) {
   const context = await browser.newContext({ acceptDownloads: true, ...options })
   const page = await context.newPage()
@@ -83,11 +110,12 @@ async function main() {
   const origin = new URL(dsh.url).origin
   const app = `${origin}/sealed-files/app/`
   log('DSH at', origin)
+  let proxy = null
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? 'chromium', headless: true, args: ['--autoplay-policy=no-user-gesture-required'] })
   try {
     // A phone: add it.
     const phone = await device(browser, dsh.url, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
-    const p = phone.page
+    let p = phone.page
     await p.goto(app)
     await p.getByRole('button', { name: 'Add this device' }).click()
     const code = (await p.locator('.code').textContent()).trim()
@@ -101,40 +129,54 @@ async function main() {
     log('phone added and approved; the page moved on by itself')
 
     // A large file: cut off by a reload after the first part, then resumed.
+    // Uploads run in the transfer engine (a worker), so the phone goes through a proxy that can cut them.
+    proxy = await interruptingProxy(origin)
+    const partOf = url => (url.includes('/api/sealed-files/part?') ? Number(new URL(url, proxy.origin).searchParams.get('n')) : null)
     let cut = 0
-    await p.route('**/api/sealed-files/part?**', (route) => {
-      const n = Number(new URL(route.request().url()).searchParams.get('n'))
-      if (n === 0) return route.continue()
+    let firstLanded = false
+    proxy.setHook((url) => {
+      const n = partOf(url)
+      if (n === null) return 'pass'
+      if (n === 0) { setTimeout(() => { firstLanded = true }, 300); return 'pass' }
       cut++
-      return route.abort('connectionreset')
+      return 'drop'
     })
-    const firstPart = p.waitForResponse(response => response.url().includes('/api/sealed-files/part?') && response.url().includes('&n=0') && response.ok())
+    await p.goto(`${proxy.origin}/sealed-files/app/`)
+    await p.getByRole('button', { name: 'Add this device' }).click()
+    let proxyDeviceId = notice.device.id
+    while (proxyDeviceId === notice.device.id) {
+      await sleep(200)
+      proxyDeviceId = readFileSync(dsh.notices, 'utf8').trim().split('\n').map(JSON.parse).at(-1).device.id
+    }
+    await p.evaluate(id => fetch('/api/sealed-files-test/approve', { method: 'POST', body: JSON.stringify({ id }) }), proxyDeviceId)
+    await p.getByRole('button', { name: 'New' }).waitFor({ timeout: 10_000 })
     await p.locator('input[type=file]').setInputFiles(big)
-    await firstPart
-    while (cut < 2) await sleep(100)
-    await p.reload()
-    await p.unroute('**/api/sealed-files/part?**')
-    await p.getByText('Unfinished').waitFor()
+    while (!firstLanded || cut < 2) await sleep(100)
+    // The tab is closed and opened again: the engine goes with its last page, the sent parts stay on the host.
+    await p.close()
+    proxy.setHook(() => 'pass')
+    p = await phone.context.newPage()
+    p.on('pageerror', error => log('page error:', error.message))
+    await p.goto(`${proxy.origin}/sealed-files/app/`)
+    const row = p.locator('.sfc-row', { hasText: 'holiday-archive.bin' })
+    await row.waitFor({ timeout: 20_000 })
     if (shots) await p.screenshot({ path: join(shots, 'phone-unfinished.png') })
-    const before = phone.requests.length
     let dropped = false
-    await p.route('**/api/sealed-files/part?**', (route) => {
-      const n = Number(new URL(route.request().url()).searchParams.get('n'))
-      if (n === 2 && !dropped) { dropped = true; return route.abort('connectionreset') }
-      return route.continue()
+    proxy.setHook((url) => {
+      if (partOf(url) === 2 && !dropped) { dropped = true; return 'drop' }
+      return 'pass'
     })
-    await p.locator('input[type=file]').setInputFiles(big)
-    await p.getByText('Sent holiday-archive.bin').waitFor({ timeout: 60_000 })
-    const resumed = phone.requests.slice(before).filter(r => r.url.includes('/api/sealed-files/part?')).map(r => Number(new URL(r.url).searchParams.get('n')))
-    assert.ok(!resumed.includes(0), `part 0 was not sent again (${resumed})`)
-    assert.ok(resumed.filter(n => n === 2).length === 2, `the lost part was retried (${resumed})`)
-    await p.unroute('**/api/sealed-files/part?**')
-    log('resumed after a reload, sent', resumed)
+    // An engine that outlived the tab carries on by itself; one that went with it shows the upload paused.
+    if (await row.evaluate(node => node.classList.contains('sfc-paused'))) await p.locator('input[type=file]').setInputFiles(big)
+    await p.locator('.row', { hasText: 'holiday-archive.bin' }).waitFor({ timeout: 90_000 })
+    const resumed = proxy.seen.map(partOf).filter(n => n !== null)
+    assert.equal(resumed.filter(n => n === 0).length, 1, `part 0 went up once (${resumed})`)
+    log('resumed after the tab was closed, sent', resumed)
 
     // A video and a picture, then a note.
     await p.locator('input[type=file]').setInputFiles([video, picture])
-    await p.getByText('Sent beach-walk.mp4').waitFor({ timeout: 60_000 })
-    await p.getByText('Sent boarding-pass.png').waitFor({ timeout: 60_000 })
+    await p.locator('.row', { hasText: 'beach-walk.mp4' }).waitFor({ timeout: 60_000 })
+    await p.locator('.row', { hasText: 'boarding-pass.png' }).waitFor({ timeout: 60_000 })
     await p.getByRole('button', { name: 'New' }).click()
     await p.getByRole('menuitem', { name: 'New note' }).click()
     await p.locator('input[placeholder="Title (optional)"]').fill('Hotel booking')
@@ -194,6 +236,20 @@ async function main() {
     await banner.waitFor({ state: 'detached' })
     log('desktop approved from the phone')
 
+    // An upload started in the panel goes on when the person moves to another page of DSH.
+    const moved = join(root, 'files', 'moved-away.bin')
+    writeFileSync(moved, randomBytes(24 * 1024 * 1024))
+    await frame.locator('input[type=file]').setInputFiles(moved)
+    await d.locator('.sfc', { hasText: 'moved-away.bin' }).waitFor({ timeout: 10_000 })
+    if (shots) await d.screenshot({ path: join(shots, 'desktop-card.png') })
+    await d.getByText('Plugins').first().click()
+    await sleep(500)
+    assert.equal(await d.locator('iframe[title="Sealed Files"]').count(), 0, 'the panel is closed')
+    await d.locator('.sfc-row.sfc-done', { hasText: 'moved-away.bin' }).waitFor({ timeout: 90_000 })
+    log('an upload went on after leaving the panel')
+    await d.getByText('Sealed Files').first().click()
+    await frame.locator('.row', { hasText: 'moved-away.bin' }).waitFor({ timeout: 10_000 })
+
     // The download is the file, byte for byte.
     await frame.locator('.row', { hasText: 'holiday-archive.bin' }).click()
     const [download] = await Promise.all([d.waitForEvent('download'), frame.getByRole('button', { name: 'Download' }).click()])
@@ -251,6 +307,7 @@ async function main() {
     log('no name or text in any request')
     console.log('PASS')
   } finally {
+    proxy?.close()
     await browser.close()
     dsh.stop()
     await sleep(500)

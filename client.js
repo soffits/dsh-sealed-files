@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
     const app = new URL('sealed-files/app/', document.baseURI).href
     const api = path => new URL(`api/sealed-files/${path}`, document.baseURI).href
     const STYLE_ID = 'dsh-sealed-files-style'
-    const CSS = '.sealed-files-icon{position:relative;display:inline-flex}.sealed-files-badge{position:absolute;top:-5px;right:-8px;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:9px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}'
+    const CSS = '.sealed-files-icon{position:relative;display:inline-flex}.sealed-files-ring{position:absolute;left:-3.5px;top:-3.5px;pointer-events:none}.sealed-files-badge{position:absolute;top:-5px;right:-8px;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:9px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}'
 
     /** How many of the signed-in person's devices wait for approval: the sidebar badge, followed live. */
     const waiting = { count: 0, listeners: new Set() }
@@ -33,9 +33,23 @@ window.__ModuleLoader__.load({
     }
     const subscribeWaiting = (listener) => { waiting.listeners.add(listener); return () => waiting.listeners.delete(listener) }
 
+    /** Transfers in progress (from the card): a ring around the icon while files move. */
+    const moving = { active: false, fraction: 0 }
+    const setMoving = (next) => {
+      if (next.active === moving.active && Math.abs(next.fraction - moving.fraction) < 0.01) return
+      Object.assign(moving, next)
+      for (const listener of waiting.listeners) listener()
+    }
+
     function SidebarIcon({ size }) {
       const count = React.useSyncExternalStore(subscribeWaiting, () => waiting.count)
-      return h('span', { className: 'sealed-files-icon' }, h(FolderGlyph, { size }),
+      const fraction = React.useSyncExternalStore(subscribeWaiting, () => (moving.active ? moving.fraction : -1))
+      const r = size / 2 + 2.5
+      const ring = fraction >= 0 && h('svg', { className: 'sealed-files-ring', width: size + 7, height: size + 7, viewBox: `0 0 ${size + 7} ${size + 7}`, 'aria-hidden': true },
+        h('circle', { cx: (size + 7) / 2, cy: (size + 7) / 2, r, fill: 'none', stroke: 'currentColor', strokeOpacity: 0.18, strokeWidth: 1.6 }),
+        h('circle', { cx: (size + 7) / 2, cy: (size + 7) / 2, r, fill: 'none', stroke: 'var(--dsw-alias-state-business-primary, #4d6bfe)', strokeWidth: 1.6, strokeLinecap: 'round',
+          strokeDasharray: `${Math.max(0.02, fraction) * 2 * Math.PI * r} ${2 * Math.PI * r}`, transform: `rotate(-90 ${(size + 7) / 2} ${(size + 7) / 2})` }))
+      return h('span', { className: 'sealed-files-icon' }, h(FolderGlyph, { size }), ring,
         count > 0 && h('span', { className: 'sealed-files-badge', 'aria-label': String(count) }, count > 9 ? '9+' : String(count)))
     }
 
@@ -69,6 +83,48 @@ window.__ModuleLoader__.load({
         h('iframe', { src, title: 'Sealed Files', allow: 'clipboard-write; fullscreen', style: { flex: 1, border: 0, width: '100%', height: '100%', background: 'transparent' } }))
     }
 
+    /**
+     * The transfer engine and its card on every page of the app: uploads go on while the person moves around DSH.
+     * The card, the engine and the panel share modules the plugin serves under /sealed-files/app/.
+     */
+    function mountTransfers(t) {
+      let card = null
+      let live = true
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = `${app}card.css`
+      document.head.appendChild(link)
+      const beforeUnload = (event) => {
+        if (!card?.wouldLose()) return
+        event.preventDefault()
+        event.returnValue = t('card.leave')
+      }
+      window.addEventListener('beforeunload', beforeUnload)
+      Promise.all([import(`${app}bus.js`), import(`${app}card.js`), import(`${app}i18n.js`)]).then(([bus, cards, words]) => {
+        if (!live) return
+        bus.startEngine(app)
+        card = cards.mountCard({
+          t: (key, vars = {}) => String(t(key)).replace(/\{(\w+)\}/g, (_, name) => (vars[name] ?? `{${name}}`)),
+          bytes: words.bytes,
+          onChange: setMoving,
+          onPick(job) {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.addEventListener('change', () => {
+              if (input.files.length > 0) card.send({ type: 'enqueue', files: [...input.files], space: job.space, folder: job.folder, kind: job.kind })
+            }, { once: true })
+            input.click()
+          },
+        })
+      }, error => console.warn('[sealed-files] transfers: %s', error.message))
+      return () => {
+        live = false
+        window.removeEventListener('beforeunload', beforeUnload)
+        card?.dispose()
+        link.remove()
+      }
+    }
+
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
@@ -81,6 +137,7 @@ window.__ModuleLoader__.load({
             if (!live) return
             disposers.push(ctx.locale.register(NS, words))
             disposers.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL, locale: NS }, SealedFilesPage)))
+            disposers.push(mountTransfers(t))
             disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL, order: 13, locale: NS, label: () => t('panel') }, SidebarIcon)))
           }).catch(error => console.warn('[sealed-files] words: %s', error.message))
           return () => {
