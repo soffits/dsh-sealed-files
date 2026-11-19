@@ -12,8 +12,8 @@ import { decryptFile, encryptToFile } from './files.js'
 import { ASSISTANT, newId } from './store.js'
 
 const INLINE_TEXT = 64 * 1024
-const TYPES = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', txt: 'text/plain', md: 'text/markdown', json: 'application/json', csv: 'text/csv', html: 'text/html', zip: 'application/zip', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }
-export const typeOf = name => TYPES[/\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? ''] ?? 'application/octet-stream'
+export { typeByName as typeOf } from '../web/types.js'
+import { typeByName } from '../web/types.js'
 const fail = message => Object.assign(new Error(message), { status: 400 })
 
 export function createAssistant({ service, outDir, origin }) {
@@ -85,7 +85,7 @@ export function createAssistant({ service, outDir, origin }) {
       const info = await stat(path)
       if (!info.isFile()) throw fail('not a file')
       const fileName = name || basename(path)
-      return addFile(createReadStream(path), info.size, { space, folder, name: fileName, type: typeOf(fileName), kind: 'file', preview: null })
+      return addFile(createReadStream(path), info.size, { space, folder, name: fileName, type: typeByName(fileName), kind: 'file', preview: null })
     },
 
     async text({ text, space, folder, title }) {

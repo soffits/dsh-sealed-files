@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- A device keeps its pairing on Safari and iPhone home-screen apps across reloads: it stores only its AES-GCM pair key, since WebKit loses a stored non-extractable X25519 key (an IndexedDB read gives null). Before, every reload there asked to add the device again.
+- Files get their type from their name when none was stored, and saving or sharing uses it, so a phone offers the right apps (Books for an EPUB, Photos for a picture).
+
 ## 0.3.2
 
 - Downloads, previews and saving work where the service worker can't read the device's keys (Safari, iPhone home-screen apps): the page hands the worker each file's key before using it, and the worker asks an open page when it was restarted since. Before, such a download saved the worker's error text as the file.

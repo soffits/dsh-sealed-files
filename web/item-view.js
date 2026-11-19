@@ -4,6 +4,7 @@
  * known about it, and what can be done with it.
  */
 import { streamUrl } from './device.js'
+import { typeOf } from './types.js'
 import { bytes, dateTime, t, when } from './i18n.js'
 import { ask, confirmed, el, icon, sheet, toast } from './ui.js'
 
@@ -24,7 +25,7 @@ export function openItem(app, item) {
   let failed = null
   if (canShare() && item.size <= SHARE_LIMIT) {
     opened.then(() => checked(streamUrl(item.id))).then(r => r.blob()).then((blob) => {
-      const file = new File([blob], item.name, { type: item.type.split(';')[0] })
+      const file = new File([blob], item.name, { type: typeOf(item.name, item.type) })
       if (navigator.canShare({ files: [file] })) ready = file
     }, (error) => { failed = error })
   }
@@ -111,7 +112,7 @@ const OFFICE = /\.(docx?|xlsx?|pptx?)$/i
 
 function preview(app, item, view) {
   const url = streamUrl(item.id)
-  const type = item.type.split(';')[0]
+  const type = typeOf(item.name, item.type)
   if (item.kind === 'text' || type === 'text/plain' || type === 'text/markdown' || type === 'application/json' || type === 'text/csv') {
     const pre = el('pre', { text: item.preview ?? t('opening') })
     view.replaceChildren(pre)

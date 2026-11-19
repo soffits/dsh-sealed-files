@@ -51,7 +51,7 @@ export const idb = {
 }
 
 /** The device record, or null before this browser was set up. */
-export const loadDevice = () => idb.get('device', 'self').then(record => record ?? null)
+export const loadDevice = () => idb.get('device', 'self').then(record => (record?.pairKey ? record : null))
 
 /** Make this browser's key and the pair key with the assistant whose public key is `assistantPub`. */
 export async function createDevice(assistantPub) {
@@ -61,7 +61,9 @@ export async function createDevice(assistantPub) {
   const shared = new Uint8Array(await subtle.deriveBits({ name: 'X25519', public: assistant }, pair.privateKey, 256))
   const pairKey = await derivePairKey(shared, pub, assistantPub)
   shared.fill(0)
-  const record = { id: null, pub: b64.encode(pub), assistantPub: b64.encode(assistantPub), privateKey: pair.privateKey, pairKey, created: Date.now() }
+  // Only the pair key is kept: the X25519 private key is needed for this one derivation, and WebKit loses a stored
+  // non-extractable X25519 key (an IndexedDB read gives null; https://bugs.webkit.org/show_bug.cgi?id=312279).
+  const record = { id: null, pub: b64.encode(pub), assistantPub: b64.encode(assistantPub), pairKey, created: Date.now() }
   await idb.put('device', 'self', record)
   return record
 }

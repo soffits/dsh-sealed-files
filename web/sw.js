@@ -1706,7 +1706,7 @@ ${nonce}`;
     all: (store) => tx(store, "readonly", (s) => s.getAll()),
     keys: (store) => tx(store, "readonly", (s) => s.getAllKeys())
   };
-  var loadDevice = () => idb.get("device", "self").then((record) => record ?? null);
+  var loadDevice = () => idb.get("device", "self").then((record) => record?.pairKey ? record : null);
   async function call(device, op, args = {}) {
     const envelope = await sealRequest(device.pairKey, device.id, { op, args });
     const response = await fetch(api("call"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope), credentials: "same-origin", cache: "no-store" });
@@ -1721,6 +1721,64 @@ ${nonce}`;
 
   // web/bus.js
   var BUS = "sealed-files";
+
+  // web/types.js
+  var BY_EXTENSION = {
+    epub: "application/epub+zip",
+    pdf: "application/pdf",
+    mobi: "application/x-mobipocket-ebook",
+    azw3: "application/vnd.amazon.ebook",
+    fb2: "application/x-fictionbook+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    heic: "image/heic",
+    heif: "image/heif",
+    avif: "image/avif",
+    bmp: "image/bmp",
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    m4v: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm",
+    mkv: "video/x-matroska",
+    mp3: "audio/mpeg",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
+    wav: "audio/wav",
+    flac: "audio/flac",
+    ogg: "audio/ogg",
+    opus: "audio/ogg",
+    txt: "text/plain",
+    md: "text/markdown",
+    json: "application/json",
+    csv: "text/csv",
+    html: "text/html",
+    srt: "text/plain",
+    ass: "text/plain",
+    zip: "application/zip",
+    "7z": "application/x-7z-compressed",
+    rar: "application/vnd.rar",
+    gz: "application/gzip",
+    tar: "application/x-tar",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    pages: "application/vnd.apple.pages",
+    numbers: "application/vnd.apple.numbers",
+    key: "application/vnd.apple.keynote"
+  };
+  var GENERIC = "application/octet-stream";
+  var typeByName = (name) => BY_EXTENSION[/\.([a-z0-9]+)$/i.exec(name ?? "")?.[1]?.toLowerCase() ?? ""] ?? GENERIC;
+  function typeOf(name, stored = "") {
+    const base2 = String(stored).split(";")[0].trim();
+    return base2 && base2 !== GENERIC ? base2 : typeByName(name);
+  }
 
   // web/sw-main.js
   var bus = new BroadcastChannel(BUS);
@@ -1793,16 +1851,18 @@ ${nonce}`;
     const meta = await idb.get("meta", id) ?? {};
     const name = meta.name ?? entry.name;
     const download = url.searchParams.has("download");
-    const inline = !download && INLINE.test(entry.type.split(";")[0]);
+    const type = typeOf(name, entry.type);
+    const inline = !download && INLINE.test(type);
     const size = entry.size;
     const headers = {
-      "content-type": inline ? entry.type.startsWith("text/plain") ? "text/plain; charset=utf-8" : entry.type : "application/octet-stream",
+      // An attachment keeps its real type too, so a phone offers the right apps for it (Books for an EPUB).
+      "content-type": type === "text/plain" ? "text/plain; charset=utf-8" : type,
       "content-disposition": disposition(inline ? "inline" : "attachment", name),
       "accept-ranges": "bytes",
       "cache-control": "no-store",
       "x-content-type-options": "nosniff"
     };
-    if (inline && !entry.type.startsWith("application/pdf")) headers["content-security-policy"] = "sandbox; default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'unsafe-inline'";
+    if (inline && type !== "application/pdf") headers["content-security-policy"] = "sandbox; default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'unsafe-inline'";
     if (size === 0) return new Response(null, { status: 200, headers: { ...headers, "content-length": "0" } });
     const asked = parseRange(request.headers.get("range"), size);
     if (asked !== null && (asked[0] >= size || asked[1] < asked[0])) return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
