@@ -1731,20 +1731,53 @@ ${nonce}`;
   self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
   self.addEventListener("message", (event) => {
     if (event.data?.type === "forget") keys.clear();
+    if (event.data?.type === "item") {
+      remember(event.data.item);
+      event.ports[0]?.postMessage({ ok: true });
+    }
   });
+  function remember(item) {
+    const entry = { ...item, key: payloadKey(b64.decode(item.fileKey), b64.decode(item.nonce)) };
+    keys.set(item.id, entry);
+    return entry;
+  }
+  async function fromPages(id) {
+    const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const item = await new Promise((done) => {
+      let left = pages.length;
+      if (left === 0) done(null);
+      const timer = setTimeout(() => done(null), 5e3);
+      for (const page of pages) {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = ({ data }) => {
+          if (data?.item) {
+            clearTimeout(timer);
+            done(data.item);
+          } else if (--left === 0) {
+            clearTimeout(timer);
+            done(null);
+          }
+        };
+        page.postMessage({ type: "need-item", id }, [channel.port2]);
+      }
+    });
+    return item ? remember(item) : null;
+  }
+  async function fromStoredDevice(id) {
+    const device = await loadDevice().catch(() => null);
+    if (!device?.id || !device.pairKey) return null;
+    const result = await call(device, "key", { id });
+    return remember({ ...result, id, device: device.id });
+  }
   self.addEventListener("fetch", (event) => {
     const url = new URL(event.request.url);
     const at2 = url.pathname.indexOf(STREAM);
     if (at2 < 0 || url.origin !== self.location.origin) return;
     event.respondWith(answer(event.request, url, url.pathname.slice(at2 + STREAM.length).split("/")[0]).catch((error) => new Response(`Could not open this file: ${error.message}`, { status: error.status ?? 500, headers: { "content-type": "text/plain; charset=utf-8" } })));
   });
-  async function keyFor(device, id) {
-    let entry = keys.get(id);
-    if (entry === void 0) {
-      const result = await call(device, "key", { id });
-      entry = { ...result, key: payloadKey(b64.decode(result.fileKey), b64.decode(result.nonce)) };
-      keys.set(id, entry);
-    }
+  async function keyFor(id) {
+    const entry = keys.get(id) ?? await fromPages(id) ?? await fromStoredDevice(id);
+    if (!entry) throw Object.assign(new Error("this device is not set up"), { status: 403 });
     return entry;
   }
   function parseRange(header, size) {
@@ -1756,9 +1789,7 @@ ${nonce}`;
   }
   var disposition = (kind, name) => `${kind}; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`;
   async function answer(request, url, id) {
-    const device = await loadDevice();
-    if (device === null || device.id === null) throw Object.assign(new Error("this device is not set up"), { status: 403 });
-    const entry = await keyFor(device, id);
+    const entry = await keyFor(id);
     const meta = await idb.get("meta", id) ?? {};
     const name = meta.name ?? entry.name;
     const download = url.searchParams.has("download");
@@ -1780,7 +1811,7 @@ ${nonce}`;
     if (asked !== null) headers["content-range"] = `bytes ${start}-${end}/${size}`;
     if (request.method === "HEAD") return new Response(null, { status: asked ? 206 : 200, headers });
     const report = download ? downloadReport(`dl-${id}-${Date.now()}`, name, end - start + 1) : null;
-    return new Response(plaintext(device, id, entry, start, end, report), { status: asked ? 206 : 200, headers });
+    return new Response(plaintext(id, entry, start, end, report), { status: asked ? 206 : 200, headers });
   }
   function downloadReport(key, name, size) {
     let sent = 0;
@@ -1797,7 +1828,7 @@ ${nonce}`;
       }
     };
   }
-  function plaintext(device, id, entry, start, end, report) {
+  function plaintext(id, entry, start, end, report) {
     const span = cipherSpan(entry.payloadAt, entry.size, start, end);
     let reader;
     let buffer = new Uint8Array(0);
@@ -1812,7 +1843,7 @@ ${nonce}`;
     };
     return new ReadableStream({
       async start() {
-        const response = await fetch(`${api("blob")}?d=${device.id}&id=${id}`, { headers: { range: `bytes=${span.from}-${span.to}` }, credentials: "same-origin", cache: "no-store" });
+        const response = await fetch(`${api("blob")}?d=${entry.device}&id=${id}`, { headers: { range: `bytes=${span.from}-${span.to}` }, credentials: "same-origin", cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         reader = response.body.getReader();
       },

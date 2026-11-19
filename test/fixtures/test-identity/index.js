@@ -28,4 +28,9 @@ export function apply(ctx) {
     const { text, space } = await request.json()
     return Response.json(await createAssistant({ service: service(), outDir: '/tmp', origin: () => '' }).text({ text, space }))
   } })
+  ctx.connection.fetch.register({ path: '/api/sealed-files-test/put', methods: ['POST'], requestBody: 'buffered', fetch: async (request) => {
+    const { createAssistant } = await import(process.env.SEALED_FILES_ASSISTANT)
+    const { path, space } = await request.json()
+    return Response.json(await createAssistant({ service: service(), outDir: '/tmp', origin: () => '' }).put({ path, space }))
+  } })
 }
