@@ -295,8 +295,30 @@ async function main() {
     await third.context.close()
     log('a waiting device showed live on both (banner, Devices badge, sidebar badge) and was rejected')
 
+    // The service worker can't read the device's keys (WebKit can't unwrap CryptoKeys from IndexedDB inside a service
+    // worker) and was restarted since the page started: an assistant's file still downloads whole, never as an error text.
+    const book = join(root, 'files', '测试书-下载.epub')
+    writeFileSync(book, randomBytes(1_254_310))
+    await d.evaluate(path => fetch('/api/sealed-files-test/put', { method: 'POST', body: JSON.stringify({ path, space: 'tester' }) }), book)
+    await frame.locator('.row', { hasText: '测试书-下载.epub' }).waitFor({ timeout: 10_000 })
+    await frame.locator('body').evaluate(() => new Promise((done) => {
+      const request = indexedDB.open('sealed-files', 1)
+      request.onsuccess = () => { const t = request.result.transaction('device', 'readwrite'); t.objectStore('device').delete('self'); t.oncomplete = done }
+    }))
+    await frame.locator('.row', { hasText: '测试书-下载.epub' }).click()
+    await frame.locator('body').evaluate(() => navigator.serviceWorker.controller.postMessage({ type: 'forget' }))
+    const [bookDownload] = await Promise.all([d.waitForEvent('download'), frame.getByRole('button', { name: 'Download' }).click()])
+    await bookDownload.saveAs(join(root, 'book.epub'))
+    assert.equal(sha(readFileSync(join(root, 'book.epub'))), sha(readFileSync(book)), 'the book downloads whole without the stored device')
+    assert.equal(bookDownload.suggestedFilename(), '测试书-下载.epub')
+    await frame.getByRole('button', { name: 'Close' }).click()
+    // An answer that is an error is shown, never saved: an id nobody has.
+    const failed = await frame.locator('body').evaluate(async () => (await fetch('/sealed-files/app/stream/aaaaaaaaaaaaaaaa')).status)
+    assert.ok(failed >= 400, `an unknown file answers an error (${failed})`)
+    log('an assistant file downloads whole when the worker cannot read the device')
+
     // Nothing readable went over the wire.
-    const secrets = ['holiday-archive', 'beach-walk', 'boarding-pass', 'Hotel booking', 'room 412', '7731-QX', 'e-ticket']
+    const secrets = ['holiday-archive', 'beach-walk', 'boarding-pass', 'Hotel booking', 'room 412', '7731-QX', 'e-ticket', '测试书']
     for (const { url, body } of [...phone.requests, ...desk.requests]) {
       if (!url.includes('/api/sealed-files/') && !url.includes('/sealed-files/app/')) continue
       for (const secret of secrets) {

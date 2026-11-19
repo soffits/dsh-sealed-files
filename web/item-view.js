@@ -19,12 +19,14 @@ export function openItem(app, item) {
   const actions = el('div', { class: 'actions' })
   s.body.append(view, facts, actions)
 
+  const opened = app.prepare(item.id)
   let ready = null
+  let failed = null
   if (canShare() && item.size <= SHARE_LIMIT) {
-    fetch(streamUrl(item.id)).then(r => r.blob()).then((blob) => {
+    opened.then(() => checked(streamUrl(item.id))).then(r => r.blob()).then((blob) => {
       const file = new File([blob], item.name, { type: item.type.split(';')[0] })
       if (navigator.canShare({ files: [file] })) ready = file
-    }, () => {})
+    }, (error) => { failed = error })
   }
 
   const render = (current) => {
@@ -43,6 +45,16 @@ export function openItem(app, item) {
   }
 
   async function save(current) {
+    try {
+      await opened
+    } catch (error) {
+      toast(t('error', { error: error.message }))
+      return
+    }
+    if (failed !== null && current.id === item.id) {
+      toast(t('error', { error: failed.message }))
+      return
+    }
     if (ready !== null && current.id === item.id) {
       try {
         await navigator.share({ files: [ready] })
@@ -63,7 +75,8 @@ export function openItem(app, item) {
   }
 
   async function copy(current) {
-    const text = await fetch(streamUrl(current.id)).then(r => r.text())
+    await opened
+    const text = await checked(streamUrl(current.id)).then(r => r.text())
     await navigator.clipboard.writeText(text)
     toast(t('copied'))
   }
@@ -83,8 +96,15 @@ export function openItem(app, item) {
   }
 
   render(item)
-  preview(app, item, view)
+  opened.then(() => preview(app, item, view), error => view.replaceChildren(el('div', { class: 'hint', text: t('error', { error: error.message }) })))
   return s
+}
+
+/** A fetch of a stream URL that refuses an error answer instead of handing its text on as the file. */
+async function checked(url) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error((await response.text().catch(() => '')) || `HTTP ${response.status}`)
+  return response
 }
 
 const OFFICE = /\.(docx?|xlsx?|pptx?)$/i
@@ -95,7 +115,7 @@ function preview(app, item, view) {
   if (item.kind === 'text' || type === 'text/plain' || type === 'text/markdown' || type === 'application/json' || type === 'text/csv') {
     const pre = el('pre', { text: item.preview ?? t('opening') })
     view.replaceChildren(pre)
-    if (item.size < 5 * 1024 * 1024) fetch(url).then(r => r.text()).then(text => { pre.textContent = text }, () => {})
+    if (item.size < 5 * 1024 * 1024) checked(url).then(r => r.text()).then(text => { pre.textContent = text }, (error) => { pre.textContent = t('error', { error: error.message }) })
   } else if (/^image\/(png|jpeg|gif|webp|avif|heic|heif|bmp)$/.test(type)) {
     view.replaceChildren(el('img', { src: url, alt: item.name }))
   } else if (type.startsWith('video/')) {
@@ -111,6 +131,7 @@ function preview(app, item, view) {
       try {
         const { id } = await app.op('preview', { id: item.id })
         await app.remember({ ...item, id, name: item.name.replace(/\.[^.]+$/, '.pdf'), type: 'application/pdf' })
+        await app.prepare(id)
         pdf(view, streamUrl(id))
       } catch (error) {
         view.replaceChildren(el('div', { class: 'hint', text: t('error', { error: error.message }) }))

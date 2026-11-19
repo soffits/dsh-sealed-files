@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+- Downloads, previews and saving work where the service worker can't read the device's keys (Safari, iPhone home-screen apps): the page hands the worker each file's key before using it, and the worker asks an open page when it was restarted since. Before, such a download saved the worker's error text as the file.
+- A failed download or preview shows its error and is never saved or shared as the file.
+
 ## 0.3.1
 
 - Inside DSH the panel follows the page's one change stream instead of opening its own, so it never waits for a free connection (browsers allow only a few per address over HTTP/1.1).

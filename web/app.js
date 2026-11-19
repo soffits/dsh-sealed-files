@@ -170,6 +170,32 @@ async function refresh() {
   return refreshing.promise
 }
 
+/** An item's key for this device's service worker, as plain bytes the page got from the Host. */
+async function itemKey(id) {
+  return { ...(await call(state.device, 'key', { id })), id, device: state.device.id }
+}
+
+/** Hand the service worker an item's key before any of its stream URLs is used. */
+async function prepare(id) {
+  const worker = navigator.serviceWorker.controller
+  if (!worker) throw new Error(t('noWorker'))
+  const item = await itemKey(id)
+  await new Promise((done, fail) => {
+    const channel = new MessageChannel()
+    const timer = setTimeout(() => fail(new Error(t('noWorker'))), 5000)
+    channel.port1.onmessage = () => { clearTimeout(timer); done() }
+    worker.postMessage({ type: 'item', item }, [channel.port2])
+  })
+}
+
+// The service worker asks an open page for a key it lost (it was stopped and started again since).
+navigator.serviceWorker?.addEventListener('message', async (event) => {
+  if (event.data?.type !== 'need-item' || !event.ports[0]) return
+  let item = null
+  try { if (state.device?.id && state.index) item = await itemKey(event.data.id) } catch { /* not this person's file */ }
+  event.ports[0].postMessage({ item })
+})
+
 /** What the service worker needs to name a file it streams, kept on this device only. */
 const remember = item => idb.put('meta', item.id, { name: item.name, type: item.type, size: item.size })
 
@@ -366,6 +392,7 @@ const app = {
   spaceLabel,
   assistantName,
   closedItem: () => { state.openId = null },
+  prepare,
   approveDevice,
   refresh,
   async moveItem(item) {
