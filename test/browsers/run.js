@@ -127,6 +127,15 @@ async function main() {
     await p.evaluate(id => fetch('/api/sealed-files-test/approve', { method: 'POST', body: JSON.stringify({ id }) }), notice.device.id)
     await p.getByRole('button', { name: 'New' }).waitFor({ timeout: 10_000 })
     log('phone added and approved; the page moved on by itself')
+    // Only AES-GCM keys are stored: WebKit loses a stored non-extractable X25519 key on the next read.
+    const stored = await p.evaluate(() => new Promise((done) => {
+      const request = indexedDB.open('sealed-files', 1)
+      request.onsuccess = () => {
+        const get = request.result.transaction('device').objectStore('device').get('self')
+        get.onsuccess = () => done(Object.values(get.result).filter(v => v instanceof CryptoKey).map(k => k.algorithm.name))
+      }
+    }))
+    assert.deepEqual(stored, ['AES-GCM'], `stored keys: ${stored}`)
 
     // A large file: cut off by a reload after the first part, then resumed.
     // Uploads run in the transfer engine (a worker), so the phone goes through a proxy that can cut them.
@@ -311,6 +320,7 @@ async function main() {
     await bookDownload.saveAs(join(root, 'book.epub'))
     assert.equal(sha(readFileSync(join(root, 'book.epub'))), sha(readFileSync(book)), 'the book downloads whole without the stored device')
     assert.equal(bookDownload.suggestedFilename(), '测试书-下载.epub')
+    assert.equal(await bookDownload.path().then(() => 'ok'), 'ok')
     await frame.getByRole('button', { name: 'Close' }).click()
     // An answer that is an error is shown, never saved: an id nobody has.
     const failed = await frame.locator('body').evaluate(async () => (await fetch('/sealed-files/app/stream/aaaaaaaaaaaaaaaa')).status)

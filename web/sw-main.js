@@ -16,6 +16,7 @@ import { CHUNK, CHUNK_CT, cipherSpan, openChunk, payloadKey } from './age.js'
 import { b64 } from './seal.js'
 import { api, call, idb, loadDevice } from './device.js'
 import { BUS } from './bus.js'
+import { typeOf } from './types.js'
 
 const bus = new BroadcastChannel(BUS)
 
@@ -95,17 +96,19 @@ async function answer(request, url, id) {
   const meta = (await idb.get('meta', id)) ?? {}
   const name = meta.name ?? entry.name
   const download = url.searchParams.has('download')
-  const inline = !download && INLINE.test(entry.type.split(';')[0])
+  const type = typeOf(name, entry.type)
+  const inline = !download && INLINE.test(type)
   const size = entry.size
   const headers = {
-    'content-type': inline ? (entry.type.startsWith('text/plain') ? 'text/plain; charset=utf-8' : entry.type) : 'application/octet-stream',
+    // An attachment keeps its real type too, so a phone offers the right apps for it (Books for an EPUB).
+    'content-type': type === 'text/plain' ? 'text/plain; charset=utf-8' : type,
     'content-disposition': disposition(inline ? 'inline' : 'attachment', name),
     'accept-ranges': 'bytes',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
   }
   // A decrypted file shown in place never runs as a page of this origin; downloads aren't rendered (and a sandboxed one is refused).
-  if (inline && !entry.type.startsWith('application/pdf')) headers['content-security-policy'] = "sandbox; default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'unsafe-inline'"
+  if (inline && type !== 'application/pdf') headers['content-security-policy'] = "sandbox; default-src 'none'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'unsafe-inline'"
   if (size === 0) return new Response(null, { status: 200, headers: { ...headers, 'content-length': '0' } })
   const asked = parseRange(request.headers.get('range'), size)
   if (asked !== null && (asked[0] >= size || asked[1] < asked[0])) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } })
