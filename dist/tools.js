@@ -1045,8 +1045,9 @@ function createAssistant({ service, outDir, origin }) {
       const persons = person ? [person] : service.people.all().map((p) => p.id);
       return persons.flatMap((id) => store.devicesOf(id).map((device) => ({ person: id, ...service.deviceView(device) })));
     },
-    revoke: async ({ device }) => {
-      await store.dropDevice(String(device));
+    async revoke({ device }) {
+      const dropped = await store.dropDevice(String(device), { event: "revoke", by: { kind: "assistant" } });
+      if (dropped === null) throw Object.assign(new Error("no such device"), { status: 404 });
       return { removed: device };
     }
   };

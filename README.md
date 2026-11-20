@@ -75,6 +75,8 @@ A link to `/?sealed-files=<id>` opens the panel on that item.
 
    It writes a decision file into `<stateDir>/decisions/`, which the plugin takes while that device is still pending with that code, also after a restart. No model is involved anywhere in pairing.
 
+Every change to the device list (added, approved, rejected, renamed, removed from the panel, removed by the assistant, dropped as unused) is appended to `<stateDir>/devices.jsonl`, one JSON line each with the time, the device and who did it (the device it was done from, an outside decision with its `--by` label, the assistant, or the sweep with its reason). Decisions taken from outside are also logged with their outcome, applied or not, in `<stateDir>/decisions.jsonl`.
+
 On iPhone and iPad, open DSH from the Home Screen. Safari deletes a site's storage after seven days without a visit, and with it the device key; the Home Screen app keeps its own. A device that lost its key is simply added again; no file is lost, since files are stored for the assistant, not for a device.
 
 ## Browser support

@@ -2,13 +2,15 @@
  * The file list, folders and devices, kept as two JSON files next to the
  * encrypted items, and the change signal every view follows. One writer: all
  * changes go through here, are saved before they are announced, and reach
- * every open page through `subscribe`.
+ * every open page through `subscribe`. Every change to the device list also
+ * appends one line to `devices.jsonl`: what happened, to which device, and who
+ * did it, so a device that went missing can be traced.
  *
  * Spaces: one per person (their own) and, unless turned off, `shared` for
  * everyone. A person sees their own and the shared one; the assistant sees all.
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { SHARED, cleanFolder, within } from '../web/protocol.js'
 import { base32nopad } from '../web/vendor.js'
@@ -24,6 +26,7 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
   await mkdir(itemsDir, { recursive: true, mode: 0o700 })
   const indexFile = join(dir, 'index.json')
   const devicesFile = join(dir, 'devices.json')
+  const rosterLog = join(dir, 'devices.jsonl')
   const index = { items: {}, folders: {}, ...(await readJson(indexFile)) }
   const roster = { devices: {}, ...(await readJson(devicesFile)) }
   const listeners = new Set()
@@ -155,32 +158,47 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
     if (any) await save([[indexFile, index]])
   }
 
-  // Devices.
+  // Devices. Each change names what happened (`pair`, `approve`, `reject`, `remove`, `rename`, `revoke`,
+  // `sweep`) and who did it: `{ kind: 'device', person, device, name }` for a page, `{ kind: 'outside', label }`
+  // for a decision from outside the page, `{ kind: 'assistant' }`, or `{ kind: 'sweep', reason }`.
 
   const devicesOf = person => Object.values(roster.devices).filter(device => device.person === person)
 
-  async function putDevice(device) {
+  /** Save the roster and log the changes, in that order, behind any save already running. */
+  function saveRoster(changes) {
+    const at = new Date().toISOString()
+    const lines = changes.map(({ event, device, by, ...more }) => `${JSON.stringify({ at, event, device: { id: device.id, person: device.person, name: device.name, status: device.status }, by, ...more })}\n`)
+    save([[devicesFile, roster]])
+    const run = () => appendFile(rosterLog, lines.join(''), { mode: 0o600 })
+    saving = saving.then(run, run)
+    return saving
+  }
+
+  async function putDevice(device, { event, by }) {
     roster.devices[device.id] = device
-    await save([[devicesFile, roster]])
+    await saveRoster([{ event, device, by }])
     changed({ persons: [device.person] })
     return device
   }
 
-  async function setDevice(id, patch) {
+  async function setDevice(id, patch, { event, by }) {
     const device = roster.devices[id]
     if (device === undefined) throw Object.assign(new Error('no such device'), { status: 404 })
+    const before = { ...device }
     Object.assign(device, patch)
-    await save([[devicesFile, roster]])
+    const was = Object.fromEntries(Object.keys(patch).filter(key => before[key] !== device[key]).map(key => [key, before[key]]))
+    await saveRoster([{ event, device, by, was }])
     changed({ persons: [device.person] })
     return device
   }
 
-  async function dropDevice(id) {
+  async function dropDevice(id, { event, by }) {
     const device = roster.devices[id]
-    if (device === undefined) return
+    if (device === undefined) return null
     delete roster.devices[id]
-    await save([[devicesFile, roster]])
+    await saveRoster([{ event, device, by }])
     changed({ persons: [device.person] })
+    return device
   }
 
   /** Last use, written at most once an hour per device so a busy page doesn't rewrite the roster. */
@@ -197,17 +215,18 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
     for (const item of gone) delete index.items[item.id]
     const orphans = Object.values(index.items).filter(item => item.derivedOf && index.items[item.derivedOf] === undefined)
     for (const item of orphans) delete index.items[item.id]
-    const dropped = Object.values(roster.devices).filter(device => (device.status === 'pending' && now - device.created > PENDING_MS)
-      || (device.status === 'approved' && now - (device.seenAt ?? device.created) > deviceIdleDays * DAY))
-    for (const device of dropped) delete roster.devices[device.id]
+    const stale = device => (device.status === 'pending' && now - device.created > PENDING_MS ? 'pending over a day'
+      : device.status === 'approved' && now - (device.seenAt ?? device.created) > deviceIdleDays * DAY ? `unused ${deviceIdleDays} days` : null)
+    const dropped = Object.values(roster.devices).map(device => ({ device, reason: stale(device) })).filter(({ reason }) => reason !== null)
+    for (const { device } of dropped) delete roster.devices[device.id]
     if (gone.length + orphans.length > 0) {
       await save([[indexFile, index]])
       await Promise.all([...gone, ...orphans].map(item => rm(itemPath(item.id), { force: true })))
       changed({ spaces: [...new Set(gone.map(item => item.space))] })
     }
     if (dropped.length > 0) {
-      await save([[devicesFile, roster]])
-      changed({ persons: [...new Set(dropped.map(device => device.person))] })
+      await saveRoster(dropped.map(({ device, reason }) => ({ event: 'sweep', device, by: { kind: 'sweep', reason } })))
+      changed({ persons: [...new Set(dropped.map(({ device }) => device.person))] })
     }
     const next = Object.values(index.items).map(item => item.expires).filter(at => at !== null)
     return next.length === 0 ? null : Math.min(...next)
