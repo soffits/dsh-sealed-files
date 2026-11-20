@@ -238,3 +238,30 @@ test('every tool answer is plain JSON (no undefined anywhere)', async () => {
   for (const answer of answers) assert.deepEqual(JSON.parse(JSON.stringify(answer)), answer)
   assert.ok(assistant.devices({}).some(d => d.id === pending.id && d.code))
 })
+
+test('every change to the device list is logged with who made it', async () => {
+  const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
+  await result(alice, 'device.rename', { id: alice.id, name: 'work laptop' })
+  const revoked = await makeDevice('sub-b')
+  await assistant.revoke({ device: revoked.id })
+  await assert.rejects(assistant.revoke({ device: revoked.id }), /no such device/)
+  const stale = await makeDevice('sub-b')
+  await service.store.sweep(Date.now() + 2 * 86_400_000)
+  await service.store.flush()
+  const log = readFileSync(join(dir, 'state/devices.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  const of = id => log.filter(line => line.device.id === id).map(({ event, by }) => [event, by])
+  const fromAlice = { kind: 'device', person: 'alice', device: alice.id, name: 'phone of sub-a' }
+  assert.deepEqual(of(alice.id), [
+    ['pair', { kind: 'person', person: 'alice' }],
+    ['approve', { kind: 'outside', label: 'test' }],
+    ['rename', fromAlice],
+  ])
+  assert.deepEqual(log.find(line => line.event === 'rename').was, { name: 'phone of sub-a' })
+  assert.deepEqual(of(bob.id), [['pair', { kind: 'person', person: 'bob' }], ['approve', { kind: 'outside', label: 'outside' }]])
+  const second = log.find(line => line.event === 'remove').device.id
+  assert.deepEqual(of(second), [['pair', { kind: 'person', person: 'alice' }], ['approve', fromAlice], ['remove', fromAlice]])
+  assert.deepEqual(log.filter(line => line.event === 'reject').map(line => line.by), [fromAlice])
+  assert.deepEqual(of(revoked.id), [['pair', { kind: 'person', person: 'bob' }], ['revoke', { kind: 'assistant' }]])
+  assert.deepEqual(of(stale.id).at(-1), ['sweep', { kind: 'sweep', reason: 'pending over a day' }])
+  for (const line of log) assert.ok(!Number.isNaN(Date.parse(line.at)) && line.device.person && line.device.status)
+})

@@ -25,6 +25,9 @@ export async function createService({ config, limits, stateDir, identityFile, of
   const previews = createPreviews({ store, identity, officeToPdf, logger })
   const keyCache = new Map()
 
+  /** Who did a roster change from a page: the device it came from. */
+  const byDevice = device => ({ kind: 'device', person: device.person, device: device.id, name: device.name })
+
   const nameOf = person => (person === ASSISTANT ? null : people.all().find(p => p.id === person)?.name ?? person)
 
   function notify(event) {
@@ -93,7 +96,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
     const code = pairingCode(devicePub, identity.pub)
     const pending = store.devicesOf(person.id).filter(d => d.status === 'pending')
     if (pending.length >= 5) throw fail(429, 'too many pending devices')
-    await store.putDevice({ id, person: person.id, name: label, pub, status: 'pending', code, created: Date.now() })
+    await store.putDevice({ id, person: person.id, name: label, pub, status: 'pending', code, created: Date.now() }, { event: 'pair', by: { kind: 'person', person: person.id } })
     notify({ event: 'device-pending', person: person.id, personName: person.name, device: { id, name: label }, code })
     return { id, status: 'pending' }
   }
@@ -114,12 +117,14 @@ export async function createService({ config, limits, stateDir, identityFile, of
     return value
   }
 
+  /** `by` says who approved, as the roster log writes it. */
   async function approve(id, by) {
     const device = store.device(id)
     if (device === null) throw fail(404, 'no such device')
     if (device.status === 'approved') return deviceView(device)
     const { code: _code, ...rest } = device
-    return deviceView(await store.putDevice({ ...rest, status: 'approved', approvedAt: Date.now(), approvedBy: by }))
+    const approvedBy = by.kind === 'device' ? by.device : by.label ?? by.kind
+    return deviceView(await store.putDevice({ ...rest, status: 'approved', approvedAt: Date.now(), approvedBy }, { event: 'approve', by }))
   }
 
   /**
@@ -131,8 +136,9 @@ export async function createService({ config, limits, stateDir, identityFile, of
     if (device === null || device.status !== 'pending') return { applied: false, reason: 'not pending' }
     if (device.code !== code) return { applied: false, reason: 'code does not match' }
     if (person !== undefined && person !== device.person) return { applied: false, reason: 'not this person' }
-    if (choice === 'yes') return { applied: true, device: await approve(device.id, by ?? 'outside') }
-    await store.dropDevice(device.id)
+    const outside = { kind: 'outside', label: typeof by === 'string' && by !== '' ? by : 'outside' }
+    if (choice === 'yes') return { applied: true, device: await approve(device.id, outside) }
+    await store.dropDevice(device.id, { event: 'reject', by: outside })
     return { applied: true, removed: device.id }
   }
 
@@ -185,25 +191,25 @@ export async function createService({ config, limits, stateDir, identityFile, of
     'device.approve': async ({ person, device, args }) => {
       const other = store.device(String(args.id))
       if (other === null || other.person !== person.id) throw fail(404, 'no such device')
-      return approve(other.id, device.id)
+      return approve(other.id, byDevice(device))
     },
-    'device.reject': async ({ person, args }) => {
+    'device.reject': async ({ person, device, args }) => {
       const other = store.device(String(args.id))
       if (other === null || other.person !== person.id || other.status !== 'pending') throw fail(404, 'no such device')
-      await store.dropDevice(other.id)
+      await store.dropDevice(other.id, { event: 'reject', by: byDevice(device) })
       return {}
     },
-    'device.remove': async ({ person, args }) => {
+    'device.remove': async ({ person, device, args }) => {
       const other = store.device(String(args.id))
       if (other === null || other.person !== person.id) throw fail(404, 'no such device')
-      await store.dropDevice(other.id)
+      await store.dropDevice(other.id, { event: 'remove', by: byDevice(device) })
       return {}
     },
-    'device.rename': async ({ person, args }) => {
+    'device.rename': async ({ person, device, args }) => {
       const other = store.device(String(args.id))
       const name = cleanName(args.name)
       if (other === null || other.person !== person.id || name === null) throw fail(400, 'bad device')
-      return deviceView(await store.setDevice(other.id, { name: name.slice(0, DEVICE_NAME) }))
+      return deviceView(await store.setDevice(other.id, { name: name.slice(0, DEVICE_NAME) }, { event: 'rename', by: byDevice(device) }))
     },
     preview: async ({ person, args }) => {
       const item = store.visibleItem(person.id, itemId(args.id))

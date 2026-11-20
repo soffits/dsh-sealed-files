@@ -26,6 +26,7 @@ Trusted: the DSH host (it holds the assistant's key and can read everything) and
 - **Downloads are a navigation of a hidden frame to the worker's URL** (answered as an attachment), so the browser's own downloader takes the decrypted stream; `<a download>` to a worker-served URL is cancelled by Chromium.
 - **People come from data**: the `requestIdentity` service of a sign-in plugin and a mapping file, the same shape other plugins use. Spaces derive from it.
 - **Pairing needs no model.** A device already added approves a new one in its own panel (the main path). For a first device, a configured command sends the code with a yes and a no over a channel outside the web proxy, and the answer comes back as a decision file (`dsh-sealed-files-decide`), applied only while that device is pending with that code. The assistant's tool can list and remove devices but not approve them.
+- **Every roster change is logged with who made it.** The store, the device list's one writer, appends a line to `devices.jsonl` for each change, so a device that went missing can be traced to a person's device, an outside decision, the assistant or the sweep. Last-use stamps are not logged.
 - **Office previews** use DSH's `officeToPdf` service when present; the PDF is stored as an item derived from the file, encrypted like any other, and removed with it.
 - **Live updates** follow a Server-Sent Events stream that carries only a version number; the page then fetches the sealed list.
 

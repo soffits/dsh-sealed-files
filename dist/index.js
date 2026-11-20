@@ -1393,7 +1393,7 @@ function createPeople(config, warn) {
 
 // src/store.js
 import { randomBytes } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile3, rename, rm as rm2, stat as stat2, writeFile } from "node:fs/promises";
+import { appendFile as appendFile2, mkdir as mkdir2, readFile as readFile3, rename, rm as rm2, stat as stat2, writeFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
 import { SHARED, cleanFolder, within } from "../web/protocol.js";
 import { base32nopad } from "../web/vendor.js";
@@ -1406,6 +1406,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
   await mkdir2(itemsDir, { recursive: true, mode: 448 });
   const indexFile = join2(dir, "index.json");
   const devicesFile = join2(dir, "devices.json");
+  const rosterLog = join2(dir, "devices.jsonl");
   const index = { items: {}, folders: {}, ...await readJson(indexFile) };
   const roster = { devices: {}, ...await readJson(devicesFile) };
   const listeners = /* @__PURE__ */ new Set();
@@ -1522,26 +1523,38 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     if (any) await save([[indexFile, index]]);
   }
   const devicesOf = (person) => Object.values(roster.devices).filter((device) => device.person === person);
-  async function putDevice(device) {
+  function saveRoster(changes) {
+    const at = (/* @__PURE__ */ new Date()).toISOString();
+    const lines = changes.map(({ event, device, by, ...more }) => `${JSON.stringify({ at, event, device: { id: device.id, person: device.person, name: device.name, status: device.status }, by, ...more })}
+`);
+    save([[devicesFile, roster]]);
+    const run = () => appendFile2(rosterLog, lines.join(""), { mode: 384 });
+    saving = saving.then(run, run);
+    return saving;
+  }
+  async function putDevice(device, { event, by }) {
     roster.devices[device.id] = device;
-    await save([[devicesFile, roster]]);
+    await saveRoster([{ event, device, by }]);
     changed({ persons: [device.person] });
     return device;
   }
-  async function setDevice(id, patch) {
+  async function setDevice(id, patch, { event, by }) {
     const device = roster.devices[id];
     if (device === void 0) throw Object.assign(new Error("no such device"), { status: 404 });
+    const before = { ...device };
     Object.assign(device, patch);
-    await save([[devicesFile, roster]]);
+    const was = Object.fromEntries(Object.keys(patch).filter((key) => before[key] !== device[key]).map((key) => [key, before[key]]));
+    await saveRoster([{ event, device, by, was }]);
     changed({ persons: [device.person] });
     return device;
   }
-  async function dropDevice(id) {
+  async function dropDevice(id, { event, by }) {
     const device = roster.devices[id];
-    if (device === void 0) return;
+    if (device === void 0) return null;
     delete roster.devices[id];
-    await save([[devicesFile, roster]]);
+    await saveRoster([{ event, device, by }]);
     changed({ persons: [device.person] });
+    return device;
   }
   function touchDevice(device) {
     const now = Date.now();
@@ -1555,16 +1568,17 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     for (const item of gone) delete index.items[item.id];
     const orphans = Object.values(index.items).filter((item) => item.derivedOf && index.items[item.derivedOf] === void 0);
     for (const item of orphans) delete index.items[item.id];
-    const dropped = Object.values(roster.devices).filter((device) => device.status === "pending" && now - device.created > PENDING_MS || device.status === "approved" && now - (device.seenAt ?? device.created) > deviceIdleDays * DAY);
-    for (const device of dropped) delete roster.devices[device.id];
+    const stale = (device) => device.status === "pending" && now - device.created > PENDING_MS ? "pending over a day" : device.status === "approved" && now - (device.seenAt ?? device.created) > deviceIdleDays * DAY ? `unused ${deviceIdleDays} days` : null;
+    const dropped = Object.values(roster.devices).map((device) => ({ device, reason: stale(device) })).filter(({ reason }) => reason !== null);
+    for (const { device } of dropped) delete roster.devices[device.id];
     if (gone.length + orphans.length > 0) {
       await save([[indexFile, index]]);
       await Promise.all([...gone, ...orphans].map((item) => rm2(itemPath(item.id), { force: true })));
       changed({ spaces: [...new Set(gone.map((item) => item.space))] });
     }
     if (dropped.length > 0) {
-      await save([[devicesFile, roster]]);
-      changed({ persons: [...new Set(dropped.map((device) => device.person))] });
+      await saveRoster(dropped.map(({ device, reason }) => ({ event: "sweep", device, by: { kind: "sweep", reason } })));
+      changed({ persons: [...new Set(dropped.map(({ device }) => device.person))] });
     }
     const next = Object.values(index.items).map((item) => item.expires).filter((at) => at !== null);
     return next.length === 0 ? null : Math.min(...next);
@@ -1872,6 +1886,7 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
   const uploads = await createUploads({ dir: stateDir, store, identity, limits, uploadDays: config.uploadDays, logger });
   const previews = createPreviews({ store, identity, officeToPdf, logger });
   const keyCache = /* @__PURE__ */ new Map();
+  const byDevice = (device) => ({ kind: "device", person: device.person, device: device.id, name: device.name });
   const nameOf = (person) => person === ASSISTANT ? null : people.all().find((p) => p.id === person)?.name ?? person;
   function notify(event) {
     const [command, ...args] = config.notifyCommand;
@@ -1940,7 +1955,7 @@ ${id}`, b642.decode(name2)));
     const code = pairingCode(devicePub, identity.pub);
     const pending = store.devicesOf(person.id).filter((d) => d.status === "pending");
     if (pending.length >= 5) throw fail(429, "too many pending devices");
-    await store.putDevice({ id, person: person.id, name: label, pub, status: "pending", code, created: Date.now() });
+    await store.putDevice({ id, person: person.id, name: label, pub, status: "pending", code, created: Date.now() }, { event: "pair", by: { kind: "person", person: person.id } });
     notify({ event: "device-pending", person: person.id, personName: person.name, device: { id, name: label }, code });
     return { id, status: "pending" };
   }
@@ -1963,15 +1978,17 @@ ${id}`, b642.decode(name2)));
     if (device === null) throw fail(404, "no such device");
     if (device.status === "approved") return deviceView(device);
     const { code: _code, ...rest } = device;
-    return deviceView(await store.putDevice({ ...rest, status: "approved", approvedAt: Date.now(), approvedBy: by }));
+    const approvedBy = by.kind === "device" ? by.device : by.label ?? by.kind;
+    return deviceView(await store.putDevice({ ...rest, status: "approved", approvedAt: Date.now(), approvedBy }, { event: "approve", by }));
   }
   async function decide({ device: id, code, choice, person, by }) {
     const device = store.device(String(id));
     if (device === null || device.status !== "pending") return { applied: false, reason: "not pending" };
     if (device.code !== code) return { applied: false, reason: "code does not match" };
     if (person !== void 0 && person !== device.person) return { applied: false, reason: "not this person" };
-    if (choice === "yes") return { applied: true, device: await approve(device.id, by ?? "outside") };
-    await store.dropDevice(device.id);
+    const outside = { kind: "outside", label: typeof by === "string" && by !== "" ? by : "outside" };
+    if (choice === "yes") return { applied: true, device: await approve(device.id, outside) };
+    await store.dropDevice(device.id, { event: "reject", by: outside });
     return { applied: true, removed: device.id };
   }
   const operations = {
@@ -2022,25 +2039,25 @@ ${id}`, b642.decode(name2)));
     "device.approve": async ({ person, device, args }) => {
       const other = store.device(String(args.id));
       if (other === null || other.person !== person.id) throw fail(404, "no such device");
-      return approve(other.id, device.id);
+      return approve(other.id, byDevice(device));
     },
-    "device.reject": async ({ person, args }) => {
+    "device.reject": async ({ person, device, args }) => {
       const other = store.device(String(args.id));
       if (other === null || other.person !== person.id || other.status !== "pending") throw fail(404, "no such device");
-      await store.dropDevice(other.id);
+      await store.dropDevice(other.id, { event: "reject", by: byDevice(device) });
       return {};
     },
-    "device.remove": async ({ person, args }) => {
+    "device.remove": async ({ person, device, args }) => {
       const other = store.device(String(args.id));
       if (other === null || other.person !== person.id) throw fail(404, "no such device");
-      await store.dropDevice(other.id);
+      await store.dropDevice(other.id, { event: "remove", by: byDevice(device) });
       return {};
     },
-    "device.rename": async ({ person, args }) => {
+    "device.rename": async ({ person, device, args }) => {
       const other = store.device(String(args.id));
       const name2 = cleanName(args.name);
       if (other === null || other.person !== person.id || name2 === null) throw fail(400, "bad device");
-      return deviceView(await store.setDevice(other.id, { name: name2.slice(0, DEVICE_NAME) }));
+      return deviceView(await store.setDevice(other.id, { name: name2.slice(0, DEVICE_NAME) }, { event: "rename", by: byDevice(device) }));
     },
     preview: async ({ person, args }) => {
       const item = store.visibleItem(person.id, itemId(args.id));

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4
+
+- Every change to the device list is logged in `<stateDir>/devices.jsonl` with who made it: pairing, approving and rejecting (in the panel or from outside), renaming, removing from the panel, the assistant's revoke and the sweep of stale or unused devices. Before, only decisions from outside were logged, so a device removed in the panel or swept left no trace.
+- The assistant's `revoke` says so when the device doesn't exist, instead of reporting it removed.
+
 ## 0.3.3
 
 - A device keeps its pairing on Safari and iPhone home-screen apps across reloads: it stores only its AES-GCM pair key, since WebKit loses a stored non-extractable X25519 key (an IndexedDB read gives null). Before, every reload there asked to add the device again.
