@@ -23,6 +23,8 @@ export const Config = z.object({
     .description('An upload is refused when it would leave less free space than this on the disk of stateDir, in GiB.'),
   retentionDays: z.natural().min(1).default(30)
     .description('Files are deleted this many days after they arrive, unless pinned.'),
+  snippetHours: z.natural().min(1).default(24)
+    .description('Clipboard snippets (short text sent in one step) are deleted this many hours after they arrive, unless pinned.'),
   uploadDays: z.natural().min(1).default(3)
     .description('Unfinished uploads are deleted after this many days without a new part.'),
   deviceIdleDays: z.natural().min(1).default(90)

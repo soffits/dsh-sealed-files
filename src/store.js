@@ -12,16 +12,17 @@
 import { randomBytes } from 'node:crypto'
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { SHARED, cleanFolder, within } from '../web/protocol.js'
+import { SHARED, SNIPPET, cleanFolder, within } from '../web/protocol.js'
 import { base32nopad } from '../web/vendor.js'
 
 export const ASSISTANT = 'assistant'
 const DAY = 86_400_000
+const HOUR = 3_600_000
 const PENDING_MS = DAY
 
 export const newId = () => base32nopad.encode(randomBytes(10)).toLowerCase()
 
-export async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdleDays, logger }) {
+export async function createStore({ dir, people, sharedSpace, retentionDays, snippetHours, deviceIdleDays, logger }) {
   const itemsDir = join(dir, 'items')
   await mkdir(itemsDir, { recursive: true, mode: 0o700 })
   const indexFile = join(dir, 'index.json')
@@ -67,6 +68,8 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
   const concerns = (person, change) => person === ASSISTANT || change.persons.includes(person) || change.spaces.some(space => canSee(person, space))
 
   const itemPath = id => join(itemsDir, `${id}.age`)
+  /** When an item of this kind, kept or not, goes: snippets live hours, everything else days. */
+  const expiresAt = (kind, pinned, now = Date.now()) => (pinned ? null : now + (kind === SNIPPET ? snippetHours * HOUR : retentionDays * DAY))
 
   function itemsFor(person) {
     const spaces = new Set(spacesOf(person))
@@ -104,7 +107,7 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
     if (patch.space !== undefined && !canSee(person, patch.space)) throw Object.assign(new Error('no such space'), { status: 403 })
     const before = item.space
     Object.assign(item, patch)
-    if (patch.pinned !== undefined) item.expires = patch.pinned ? null : Date.now() + retentionDays * DAY
+    if (patch.pinned !== undefined) item.expires = expiresAt(item.kind, patch.pinned)
     await save([[indexFile, index]])
     changed({ spaces: [...new Set([before, item.space])] })
     return item
@@ -265,7 +268,7 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, dev
     touchDevice,
     sweep,
     usedBytes,
-    expiresAt: (pinned, now = Date.now()) => (pinned ? null : now + retentionDays * DAY),
+    expiresAt,
     get version() { return version },
     /** Follow changes: `listener({ version, spaces, persons })`. Returns the unsubscribe. */
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },

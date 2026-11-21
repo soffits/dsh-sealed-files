@@ -11,6 +11,9 @@ export const PARTS_IN_FLIGHT = 3
 /** Text sent as a note is stored as a file of this type. */
 export const TEXT_TYPE = 'text/plain;charset=utf-8'
 export const PREVIEW_CHARS = 2000
+/** A snippet is short text for the clipboard; anything longer is a note. */
+export const SNIPPET_CHARS = 10_000
+export const SNIPPET = 'snippet'
 
 export const partCount = size => Math.ceil(chunkCount(size) / PART_CHUNKS)
 

@@ -5,8 +5,10 @@
  * retried, a video that plays and seeks, a picture and a note; the file comes
  * back byte for byte as a download; a desktop device is added and approved
  * from the first; a note the assistant puts in shows on both without a
- * reload. Every request is recorded, and no file name or note text may appear
- * in any of them.
+ * reload; a clipboard snippet sent from the phone shows in full on the desktop
+ * and copies in one tap, and one from the assistant reaches both. Every
+ * request is recorded, and no file name, note or snippet text may appear in
+ * any of them.
  *
  * Boots a throwaway DSH home; never point it at a DSH home people use.
  * Env: CHROME_PATH (default `chromium` on PATH), SCREENSHOT_DIR (optional).
@@ -189,7 +191,7 @@ async function main() {
     await p.getByRole('button', { name: 'New' }).click()
     await p.getByRole('menuitem', { name: 'New note' }).click()
     await p.locator('input[placeholder="Title (optional)"]').fill('Hotel booking')
-    await p.locator('textarea').fill('Confirmation 7731-QX\nCheck-in 15:00, room 412')
+    await p.locator('.sheet-wrap textarea').fill('Confirmation 7731-QX\nCheck-in 15:00, room 412')
     await p.getByRole('button', { name: 'Save note' }).click()
     await p.locator('.row', { hasText: 'Hotel booking.txt' }).waitFor()
     if (shots) await p.screenshot({ path: join(shots, 'phone-list.png') })
@@ -222,7 +224,7 @@ async function main() {
     await p.getByRole('button', { name: 'Close' }).click()
 
     // A desktop: added, approved from the phone.
-    const desk = await device(browser, dsh.url, { viewport: { width: 1440, height: 900 } })
+    const desk = await device(browser, dsh.url, { viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] })
     const d = desk.page
     await d.goto(`${origin}/`)
     // DSH's first-run notice.
@@ -282,6 +284,39 @@ async function main() {
       await frame.getByRole('button', { name: 'Close' }).click()
     }
 
+    // The clipboard: a code typed on the phone goes in one step and shows in full on the desktop; Copy puts it on the clipboard.
+    const clipText = 'Door code 7319#\nback gate'
+    await p.locator('.clip-input').fill(clipText)
+    await p.locator('.clip').getByRole('button', { name: 'Send' }).click()
+    await p.locator('.clip-item .clip-text', { hasText: 'Door code 7319#' }).waitFor({ timeout: 10_000 })
+    assert.equal(await p.locator('.clip-input').inputValue(), '', 'the box is empty after sending')
+    const deskClip = frame.locator('.clip-item', { hasText: 'Door code 7319#' })
+    await deskClip.waitFor({ timeout: 10_000 })
+    assert.equal(await deskClip.locator('.clip-text').textContent(), clipText, 'the whole text shows inline')
+    assert.equal(await frame.locator('.row', { hasText: 'snippet' }).count(), 0, 'a snippet is not a row in the file list')
+    await deskClip.getByRole('button', { name: 'Copy' }).click()
+    await deskClip.getByRole('button', { name: 'Copied' }).waitFor()
+    assert.equal(await frame.locator('body').evaluate(() => navigator.clipboard.readText()), clipText, 'Copy put the text on the clipboard')
+    // Typing while a change arrives keeps the text in the box.
+    await frame.locator('.clip-input').fill('half typed')
+    await p.evaluate(() => fetch('/api/sealed-files-test/snippet', { method: 'POST', body: JSON.stringify({ text: 'Verification code 640 118', space: 'tester' }) }))
+    await frame.locator('.clip-item', { hasText: 'Verification code 640 118' }).waitFor({ timeout: 10_000 })
+    await p.locator('.clip-item', { hasText: 'Verification code 640 118' }).waitFor({ timeout: 10_000 })
+    assert.equal(await frame.locator('.clip-input').inputValue(), 'half typed')
+    await frame.locator('.clip-input').fill('')
+    if (shots) {
+      await p.screenshot({ path: join(shots, 'phone-clipboard.png') })
+      await d.screenshot({ path: join(shots, 'desktop-clipboard.png') })
+    }
+    // Kept, then deleted from the phone.
+    const phoneClip = p.locator('.clip-item', { hasText: 'Door code 7319#' })
+    await phoneClip.getByRole('button', { name: 'Keep' }).click()
+    await phoneClip.getByText('kept').waitFor({ timeout: 10_000 })
+    await phoneClip.getByRole('button', { name: 'Delete' }).click()
+    await p.locator('.sheet-wrap').last().getByRole('button', { name: 'Delete' }).click()
+    await deskClip.waitFor({ state: 'detached', timeout: 10_000 })
+    log('a snippet went from the phone to the desktop in one step, copied, kept and deleted; one from the assistant reached both')
+
     // A third device asks to join: both added devices show it at once, badges included, and it is rejected.
     const third = await device(browser, dsh.url, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
     await third.page.goto(app)
@@ -328,7 +363,7 @@ async function main() {
     log('an assistant file downloads whole when the worker cannot read the device')
 
     // Nothing readable went over the wire.
-    const secrets = ['holiday-archive', 'beach-walk', 'boarding-pass', 'Hotel booking', 'room 412', '7731-QX', 'e-ticket', '测试书']
+    const secrets = ['holiday-archive', 'beach-walk', 'boarding-pass', 'Hotel booking', 'room 412', '7731-QX', 'e-ticket', '测试书', 'Door code', '7319', '640 118']
     for (const { url, body } of [...phone.requests, ...desk.requests]) {
       if (!url.includes('/api/sealed-files/') && !url.includes('/sealed-files/app/')) continue
       for (const secret of secrets) {

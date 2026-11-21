@@ -2,7 +2,7 @@
 import { homedir } from "node:os";
 import { resolve as resolve2 } from "node:path";
 
-// node_modules/@deepseek-ai/cosmokit/lib/index.js
+// ../dsh-sealed-files/node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
   return value === null || value === void 0;
 }
@@ -227,7 +227,7 @@ var Time;
   Time2.template = template;
 })(Time || (Time = {}));
 
-// node_modules/@deepseek-ai/schemastery/lib/index.mjs
+// ../dsh-sealed-files/node_modules/@deepseek-ai/schemastery/lib/index.mjs
 var kSchema = /* @__PURE__ */ Symbol.for("schemastery");
 var kValidationError = /* @__PURE__ */ Symbol.for("ValidationError");
 globalThis.__schemastery_index__ ??= 0;
@@ -872,7 +872,7 @@ defineMethod("transform", [
 import { createReadStream as createReadStream2 } from "node:fs";
 import { mkdir, open as open2, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { ID, PREVIEW_CHARS, SHARED as SHARED2, TEXT_TYPE, cleanFolder as cleanFolder2, cleanName } from "../web/protocol.js";
+import { ID, SHARED as SHARED2, SNIPPET as SNIPPET2, cleanFolder as cleanFolder2 } from "../web/protocol.js";
 
 // src/files.js
 import { open } from "node:fs/promises";
@@ -913,49 +913,11 @@ async function* decryptFile(path, priv, size) {
   if (index !== final) throw new Error("age file truncated");
   yield openChunk(key, index, true, pending);
 }
-async function encryptToFile(pieces, size, dest, recipientPub) {
-  const fileKey = random(FILE_KEY_BYTES);
-  const nonce = random(NONCE_BYTES);
-  const key = payloadKey(fileKey, nonce);
-  const header = encodeHeader(fileKey, recipientPub);
-  const final = chunkCount(size) - 1;
-  const handle = await open(dest, "wx", 384);
-  let written = 0;
-  const write2 = async (bytes) => {
-    await handle.write(bytes, 0, bytes.length, written);
-    written += bytes.length;
-  };
-  try {
-    await write2(header);
-    await write2(nonce);
-    let index = 0;
-    let total = 0;
-    let pending = Buffer.alloc(0);
-    for await (const piece of pieces) {
-      total += piece.length;
-      if (total > size) throw new Error("more bytes than the stated size");
-      pending = pending.length === 0 ? Buffer.from(piece) : Buffer.concat([pending, piece]);
-      while (index < final && pending.length >= CHUNK) {
-        await write2(sealChunk(key, index, false, pending.subarray(0, CHUNK)));
-        pending = pending.subarray(CHUNK);
-        index++;
-      }
-    }
-    if (total !== size || index !== final) throw new Error("fewer bytes than the stated size");
-    await write2(sealChunk(key, index, true, pending));
-    if (written !== header.length + NONCE_BYTES + payloadSize(size)) throw new Error("age file size mismatch");
-    return { cipherSize: written, payloadAt: header.length + NONCE_BYTES };
-  } finally {
-    await handle.close();
-  }
-}
 
 // src/store.js
-import { randomBytes } from "node:crypto";
-import { SHARED, cleanFolder, within } from "../web/protocol.js";
+import { SHARED, SNIPPET, cleanFolder, within } from "../web/protocol.js";
 import { base32nopad } from "../web/vendor.js";
 var ASSISTANT = "assistant";
-var newId = () => base32nopad.encode(randomBytes(10)).toLowerCase();
 
 // src/assistant.js
 import { typeByName } from "../web/types.js";
@@ -970,18 +932,7 @@ function createAssistant({ service, outDir, origin }) {
     if (!spaces.includes(space)) throw fail(`unknown space ${space}; spaces: ${spaces.join(", ")}`);
     return space;
   }
-  const view = (item) => ({ ...service.itemView(item), link: link(item.id), unseen: !item.seenByAssistant });
-  async function addFile(pieces, size, { space, folder, name: name2, type, kind, preview }) {
-    const where = cleanFolder2(folder ?? "");
-    const clean = cleanName(name2);
-    if (where === null) throw fail("bad folder");
-    if (clean === null) throw fail("bad name");
-    await service.uploads.makeRoom(size + 4096);
-    const id = newId();
-    const { cipherSize, payloadAt } = await encryptToFile(pieces, size, store.itemPath(id), identity.pub);
-    const now = Date.now();
-    return view(await store.addItem({ id, space: spaceOf(space), folder: where, name: clean, type, kind, preview, size, cipherSize, payloadAt, from: { person: ASSISTANT }, created: now, pinned: false, expires: store.expiresAt(false, now), seenByAssistant: true }));
-  }
+  const view = async (item) => ({ ...await service.fullView(item), link: link(item.id), unseen: !item.seenByAssistant });
   return {
     spaces: () => store.spacesOf(ASSISTANT).map((space) => ({ id: space, name: space === SHARED2 ? "shared" : service.nameOf(space) })),
     async list({ space, folder, unseen } = {}) {
@@ -990,7 +941,7 @@ function createAssistant({ service, outDir, origin }) {
       if (folder !== void 0) items = items.filter((item) => item.folder === folder);
       if (unseen) items = items.filter((item) => !item.seenByAssistant);
       items.sort((a, b) => b.created - a.created);
-      const out = items.map(view);
+      const out = await Promise.all(items.map(view));
       await store.markSeen(items.map((item) => item.id));
       return { spaces: this.spaces(), folders: store.foldersFor(ASSISTANT), items: out };
     },
@@ -999,10 +950,11 @@ function createAssistant({ service, outDir, origin }) {
       const item = store.item(id);
       if (item === null || item.derivedOf) throw Object.assign(new Error("no such file"), { status: 404 });
       await store.markSeen([id]);
+      if (item.kind === SNIPPET2) return view(item);
       if (item.kind === "text" && item.size <= INLINE_TEXT) {
         const pieces = [];
         for await (const piece of decryptFile(store.itemPath(id), identity.priv, item.size)) pieces.push(piece);
-        return { ...view(item), text: Buffer.concat(pieces).toString("utf8") };
+        return { ...await view(item), text: Buffer.concat(pieces).toString("utf8") };
       }
       const dir = join(outDir, id);
       await mkdir(dir, { recursive: true, mode: 448 });
@@ -1017,20 +969,16 @@ function createAssistant({ service, outDir, origin }) {
       } finally {
         await handle.close();
       }
-      return { ...view(item), path };
+      return { ...await view(item), path };
     },
     async put({ path, space, folder, name: name2 }) {
       const info = await stat(path);
       if (!info.isFile()) throw fail("not a file");
       const fileName = name2 || basename(path);
-      return addFile(createReadStream2(path), info.size, { space, folder, name: fileName, type: typeByName2(fileName), kind: "file", preview: null });
+      return view(await service.addFile(createReadStream2(path), info.size, { space: spaceOf(space), folder, name: fileName, type: typeByName2(fileName), kind: "file", from: ASSISTANT }));
     },
-    async text({ text, space, folder, title }) {
-      if (typeof text !== "string" || text === "") throw fail("no text");
-      const bytes = Buffer.from(text, "utf8");
-      const name2 = cleanName(title) ?? `${text.split("\n")[0].slice(0, 40).trim() || "Note"}.txt`;
-      return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name2) ? name2 : `${name2}.txt`, type: TEXT_TYPE, kind: "text", preview: text.slice(0, PREVIEW_CHARS) });
-    },
+    text: async ({ text, space, folder, title }) => view(await service.addNote(ASSISTANT, { text, space: spaceOf(space), folder, title })),
+    snippet: async ({ text, space }) => view(await service.addSnippet(ASSISTANT, { text, space: spaceOf(space) })),
     remove: async ({ id }) => {
       await store.removeItem(ASSISTANT, id);
       return { removed: id };
@@ -1063,14 +1011,14 @@ var Config = Schema.object({
 var PARAMETERS = Object.freeze({
   type: "object",
   properties: {
-    action: { type: "string", enum: ["list", "get", "put", "text", "remove", "pin", "move", "mkdir", "devices", "revoke"], description: "list: files and notes, newest first, with unseen marked (listing marks them seen). get: decrypt one; a note comes back as text, a file is written to a local path. put: encrypt a local file into a space. text: put a note. remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; revoke removes one. Adding a device needs no assistant: the person approves it on a device they already added, or with the yes button in the confirmation sent to their chat app." },
-    space: { type: "string", description: "list (filter), put, text, move, mkdir: a space id. Each person has their own (their person id), and `shared` is everyone's. Files expire after the retention days unless pinned." },
+    action: { type: "string", enum: ["list", "get", "put", "text", "snippet", "remove", "pin", "move", "mkdir", "devices", "revoke"], description: "list: files, notes and clipboard snippets, newest first, with unseen marked (listing marks them seen); a snippet carries its text. get: decrypt one; a note or snippet comes back as text, a file is written to a local path. put: encrypt a local file into a space. text: put a note (a .txt file, kept like files). snippet: put short text on the space's clipboard (a link, a code, a password, an error line; shown in full with a copy button, deleted after a day unless pinned). remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; revoke removes one. Adding a device needs no assistant: the person approves it on a device they already added, or with the yes button in the confirmation sent to their chat app." },
+    space: { type: "string", description: "list (filter), put, text, snippet, move, mkdir: a space id. Each person has their own (their person id), and `shared` is everyone's. Files expire after the retention days unless pinned." },
     folder: { type: "string", description: "A folder path inside the space (a/b), empty for the top." },
     unseen: { type: "boolean", description: "list: only what arrived since you last listed or read it." },
     id: { type: "string", description: "get, remove, pin, move: the item id." },
     path: { type: "string", description: "put: absolute path of a local file." },
     name: { type: "string", description: "put: the name to show, defaults to the file name." },
-    text: { type: "string", description: "text: the note." },
+    text: { type: "string", description: "text: the note. snippet: the text, up to 10000 characters." },
     title: { type: "string", description: "text: a name for the note; defaults to its first line." },
     pinned: { type: "boolean", description: "pin: true keeps it, false lets it expire again." },
     person: { type: "string", description: "devices: only this person's." },
@@ -1079,7 +1027,7 @@ var PARAMETERS = Object.freeze({
   required: ["action"],
   additionalProperties: false
 });
-var DESCRIPTION = "Sealed Files: the end-to-end encrypted file and note panel in the DSH Web UI. People drop files and notes there for you, and you put files and notes there for them; everything is encrypted in their browser and only you and their own devices can read it. Each result carries a link to open the item in the panel; send it with your message.";
+var DESCRIPTION = "Sealed Files: the end-to-end encrypted file and note panel in the DSH Web UI, with a clipboard for short text. People drop files, notes and snippets there for you, and you put them there for them; everything is encrypted in their browser and only you and their own devices can read it. Each result carries a link to open the item in the panel; send it with your message.";
 var expand = (path) => resolve2(path.replace(/^~(?=$|\/)/, homedir()));
 function createTool({ getService, outDir, origin }) {
   return {
@@ -1101,7 +1049,7 @@ function createTool({ getService, outDir, origin }) {
     presentCall: (args) => ({ card: "generic", title: "Sealed Files", kind: "other", ...args?.path ?? args?.id ?? args?.title ? { rawInput: args.path ?? args.id ?? args.title } : {} })
   };
 }
-var ACTIONS = { list: "list", get: "get", put: "put", text: "text", remove: "remove", pin: "pin", move: "move", mkdir: "mkdir", devices: "devices", revoke: "revoke" };
+var ACTIONS = { list: "list", get: "get", put: "put", text: "text", snippet: "snippet", remove: "remove", pin: "pin", move: "move", mkdir: "mkdir", devices: "devices", revoke: "revoke" };
 function apply(ctx, config = {}) {
   ctx.tools.register(createTool({
     getService: () => ctx.get("sealedFiles")?.service(),
