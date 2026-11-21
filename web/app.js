@@ -1,8 +1,9 @@
 /**
  * The Sealed Files page: sets this device up (or finds it), then shows the
- * person's spaces and folders, sends files and notes, and opens items. The
- * file list arrives sealed for this device and is redrawn whenever the
- * Host's change stream says something this person sees changed.
+ * person's spaces and folders with the clipboard on top, sends files, notes
+ * and snippets, and opens items. The file list arrives sealed for this device
+ * and is redrawn whenever the Host's change stream says something this person
+ * sees changed.
  */
 import { b64, deviceIdOf, pairingCode } from './seal.js'
 import { api, call, createDevice, forgetDevice, guessName, idb, loadDevice, saveDevice, sealName } from './device.js'
@@ -13,7 +14,8 @@ import { openItem } from './item-view.js'
 import { openDevices } from './devices-view.js'
 import { BUS, engineLink, startEngine } from './bus.js'
 import { mountCard } from './card.js'
-import { parentOf } from './protocol.js'
+import { SNIPPET, parentOf } from './protocol.js'
+import { createClipboard, snippetsOf } from './clipboard.js'
 
 const params = new URLSearchParams(location.hash.slice(1))
 const embedded = params.has('embedded')
@@ -158,12 +160,13 @@ async function refresh() {
       state.space ??= index.spaces.find(s => s.own)?.id ?? index.spaces[0]?.id
       if (!index.spaces.some(s => s.id === state.space)) state.space = index.spaces[0]?.id
       if (state.folder !== '' && !(index.folders[state.space] ?? []).includes(state.folder)) state.folder = ''
-      await Promise.all(index.items.map(item => remember(item)))
+      await Promise.all(index.items.filter(item => item.kind !== SNIPPET).map(item => remember(item)))
       draw()
       if (linkedItem) {
         const item = index.items.find(i => i.id === linkedItem)
         linkedItem = null
-        if (item) { state.space = item.space; state.folder = item.folder; draw(); open(item) }
+        if (item?.kind === SNIPPET) { state.space = item.space; state.folder = ''; draw(); highlight(item.id) }
+        else if (item) { state.space = item.space; state.folder = item.folder; draw(); open(item) }
       }
     } while (refreshing.again)
   })().finally(() => { refreshing = null })
@@ -211,9 +214,18 @@ async function op(name, args) {
   }
 }
 
-const errorText = error => (['file-too-large', 'store-full', 'disk-full', 'not-approved'].includes(error.code ?? error.message)
+const errorText = error => (['file-too-large', 'store-full', 'disk-full', 'not-approved', 'snippet-too-long'].includes(error.code ?? error.message)
   ? t(`error.${error.code ?? error.message}`, { max: bytes(state.index?.limits.maxFileBytes ?? 0) })
   : t('error', { error: error.message }))
+
+/** Scroll to a snippet a link pointed at and mark it for a moment. */
+function highlight(id) {
+  const node = root.querySelector(`.clip-item[data-id="${id}"]`)
+  if (!node) return
+  node.scrollIntoView({ block: 'center' })
+  node.classList.add('flash')
+  setTimeout(() => node.classList.remove('flash'), 2000)
+}
 
 const fileInput = el('input', { type: 'file', multiple: true, hidden: true, onchange: () => { sendFiles([...fileInput.files]); fileInput.value = '' } })
 
@@ -221,9 +233,11 @@ function draw() {
   const index = state.index
   const list = el('ul', { class: 'list' })
   const folders = (index.folders[state.space] ?? []).filter(f => parentOf(f) === state.folder && f !== state.folder)
-  const items = index.items.filter(i => i.space === state.space && i.folder === state.folder).sort((a, b) => b.created - a.created)
+  const files = index.items.filter(i => i.space === state.space && i.kind !== SNIPPET)
+  const items = files.filter(i => i.folder === state.folder).sort((a, b) => b.created - a.created)
+  const snippets = state.folder === '' ? snippetsOf(index, state.space) : []
   for (const folder of folders) {
-    const count = index.items.filter(i => i.space === state.space && (i.folder === folder || i.folder.startsWith(`${folder}/`))).length
+    const count = files.filter(i => i.folder === folder || i.folder.startsWith(`${folder}/`)).length
     list.append(el('li', { class: 'row', tabindex: '0', onclick: () => { state.folder = folder; draw() }, onkeydown: e => { if (e.key === 'Enter') { state.folder = folder; draw() } } },
       el('div', { class: 'tile', 'data-tone': 'folder' }, icon('folder')),
       el('div', { class: 'what' }, el('div', { class: 'name', text: folder.split('/').pop() }), el('div', { class: 'sub', text: t('count.items', { n: count }) })),
@@ -266,7 +280,7 @@ function draw() {
     el('div', { class: 'actions' },
       el('button', { class: 'btn primary', onclick: () => approveDevice(device) }, t('devices.approve')),
       el('button', { class: 'btn', onclick: () => op('device.reject', { id: device.id }) }, t('devices.reject')))))
-  const main = el('main', {}, ...waiting, list, folders.length + items.length === 0 && el('div', { class: 'empty', text: state.folder === '' ? t('empty') : t('emptyFolder') }),
+  const main = el('main', {}, ...waiting, state.folder === '' && (clipboard ??= makeClipboard()).view(snippets), list, folders.length + items.length + snippets.length === 0 && el('div', { class: 'empty', text: state.folder === '' ? t('empty') : t('emptyFolder') }),
     el('div', { class: 'foot', text: t('version', { version: state.whoami.version }) }))
   clear(root)
   root.append(...[bar, tabs, state.folder !== '' && crumbs, main, fileInput].filter(Boolean))
@@ -317,6 +331,14 @@ function writeNote() {
 // Uploads go to the transfer engine, which the DSH page keeps running (or this tab, when the panel has one of its own).
 
 const engine = engineLink()
+// Made on the first draw, once the words are loaded.
+let clipboard = null
+const makeClipboard = () => createClipboard({
+  get space() { return state.space },
+  op: (name, args) => op(name, args),
+  senderName: item => senderName(item),
+  redraw: () => draw(),
+})
 let card = null
 if (!embedded) {
   startEngine(new URL('./', location.href))

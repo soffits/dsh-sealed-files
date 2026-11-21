@@ -175,7 +175,7 @@ export async function createUploads({ dir, store, identity, limits, uploadDays, 
       from: { person: meta.person, device: device.id },
       created: now,
       pinned: false,
-      expires: store.expiresAt(false, now),
+      expires: store.expiresAt(about.kind, false, now),
       seenByAssistant: false,
     })
   }

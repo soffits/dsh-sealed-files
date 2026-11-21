@@ -1151,6 +1151,7 @@ var Config = Schema.object({
   maxStoreGb: Schema.number().min(0.01).default(10).description("Most the stored files and unfinished uploads may take together, in GiB."),
   minFreeGb: Schema.number().min(0).default(6).description("An upload is refused when it would leave less free space than this on the disk of stateDir, in GiB."),
   retentionDays: Schema.natural().min(1).default(30).description("Files are deleted this many days after they arrive, unless pinned."),
+  snippetHours: Schema.natural().min(1).default(24).description("Clipboard snippets (short text sent in one step) are deleted this many hours after they arrive, unless pinned."),
   uploadDays: Schema.natural().min(1).default(3).description("Unfinished uploads are deleted after this many days without a new part."),
   deviceIdleDays: Schema.natural().min(1).default(90).description("A device that has not been used for this many days is removed from the list."),
   notifyCommand: Schema.array(Schema.string()).default([]).description("Program and fixed arguments run when a device asks to be added, with one line of JSON on standard input: { event, person, device: { id, name }, code }. Send the code to that person over a channel that does not pass through the web proxy, such as a chat app. Empty runs nothing."),
@@ -1204,7 +1205,7 @@ async function followDecisions({ stateDir, decide, logger }) {
 import { spawn } from "node:child_process";
 import { join as join4 } from "node:path";
 import { b64 as b642, deviceIdOf, openBytes, pairingCode } from "../web/seal.js";
-import { ID as ID2, SHARED as SHARED2, cleanFolder as cleanFolder3, cleanName } from "../web/protocol.js";
+import { ID as ID2, PREVIEW_CHARS, SHARED as SHARED2, SNIPPET as SNIPPET2, SNIPPET_CHARS, TEXT_TYPE, cleanFolder as cleanFolder3, cleanName } from "../web/protocol.js";
 
 // src/files.js
 import { open } from "node:fs/promises";
@@ -1395,13 +1396,14 @@ function createPeople(config, warn) {
 import { randomBytes } from "node:crypto";
 import { appendFile as appendFile2, mkdir as mkdir2, readFile as readFile3, rename, rm as rm2, stat as stat2, writeFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
-import { SHARED, cleanFolder, within } from "../web/protocol.js";
+import { SHARED, SNIPPET, cleanFolder, within } from "../web/protocol.js";
 import { base32nopad } from "../web/vendor.js";
 var ASSISTANT = "assistant";
 var DAY = 864e5;
+var HOUR = 36e5;
 var PENDING_MS = DAY;
 var newId = () => base32nopad.encode(randomBytes(10)).toLowerCase();
-async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdleDays, logger }) {
+async function createStore({ dir, people, sharedSpace, retentionDays, snippetHours, deviceIdleDays, logger }) {
   const itemsDir = join2(dir, "items");
   await mkdir2(itemsDir, { recursive: true, mode: 448 });
   const indexFile = join2(dir, "index.json");
@@ -1440,6 +1442,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
   const canSee = (person, space) => spacesOf(person).includes(space);
   const concerns = (person, change) => person === ASSISTANT || change.persons.includes(person) || change.spaces.some((space) => canSee(person, space));
   const itemPath = (id) => join2(itemsDir, `${id}.age`);
+  const expiresAt = (kind, pinned, now = Date.now()) => pinned ? null : now + (kind === SNIPPET ? snippetHours * HOUR : retentionDays * DAY);
   function itemsFor(person) {
     const spaces = new Set(spacesOf(person));
     return Object.values(index.items).filter((item) => spaces.has(item.space) && !item.derivedOf);
@@ -1471,7 +1474,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     if (patch.space !== void 0 && !canSee(person, patch.space)) throw Object.assign(new Error("no such space"), { status: 403 });
     const before = item.space;
     Object.assign(item, patch);
-    if (patch.pinned !== void 0) item.expires = patch.pinned ? null : Date.now() + retentionDays * DAY;
+    if (patch.pinned !== void 0) item.expires = expiresAt(item.kind, patch.pinned);
     await save([[indexFile, index]]);
     changed({ spaces: [.../* @__PURE__ */ new Set([before, item.space])] });
     return item;
@@ -1618,7 +1621,7 @@ async function createStore({ dir, people, sharedSpace, retentionDays, deviceIdle
     touchDevice,
     sweep,
     usedBytes,
-    expiresAt: (pinned, now = Date.now()) => pinned ? null : now + retentionDays * DAY,
+    expiresAt,
     get version() {
       return version2;
     },
@@ -1838,7 +1841,7 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
       from: { person: meta.person, device: device.id },
       created: now,
       pinned: false,
-      expires: store.expiresAt(false, now),
+      expires: store.expiresAt(about.kind, false, now),
       seenByAssistant: false
     });
   }
@@ -1882,10 +1885,11 @@ var DEVICE_NAME = 80;
 async function createService({ config, limits, stateDir, identityFile, officeToPdf, logger }) {
   const identity = loadIdentity(identityFile);
   const people = createPeople(config, (...args) => logger.warn(...args));
-  const store = await createStore({ dir: stateDir, people, sharedSpace: config.sharedSpace, retentionDays: config.retentionDays, deviceIdleDays: config.deviceIdleDays, logger });
+  const store = await createStore({ dir: stateDir, people, sharedSpace: config.sharedSpace, retentionDays: config.retentionDays, snippetHours: config.snippetHours, deviceIdleDays: config.deviceIdleDays, logger });
   const uploads = await createUploads({ dir: stateDir, store, identity, limits, uploadDays: config.uploadDays, logger });
   const previews = createPreviews({ store, identity, officeToPdf, logger });
   const keyCache = /* @__PURE__ */ new Map();
+  const snippetCache = /* @__PURE__ */ new Map();
   const byDevice = (device) => ({ kind: "device", person: device.person, device: device.id, name: device.name });
   const nameOf = (person) => person === ASSISTANT ? null : people.all().find((p) => p.id === person)?.name ?? person;
   function notify(event) {
@@ -1907,6 +1911,45 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
       logger.warn("notify command failed: %s", error.message);
     }
   }
+  async function addFile(pieces, size, { space, folder = "", name: name2, type, kind, preview = null, from: from2 }) {
+    const where = cleanFolder3(folder);
+    const clean = cleanName(name2);
+    if (where === null) throw fail(400, "bad folder");
+    if (clean === null) throw fail(400, "bad name");
+    if (!store.canSee(from2, space)) throw fail(403, "no such space");
+    await uploads.makeRoom(size + 4096);
+    const id = newId();
+    const { cipherSize, payloadAt } = await encryptToFile(pieces, size, store.itemPath(id), identity.pub);
+    const now = Date.now();
+    return store.addItem({ id, space, folder: where, name: clean, type, kind, preview, size, cipherSize, payloadAt, from: { person: from2 }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from2 === ASSISTANT });
+  }
+  function addNote(from2, { text, space, folder, title }) {
+    if (typeof text !== "string" || text === "") throw fail(400, "no text");
+    const bytes = Buffer.from(text, "utf8");
+    const name2 = cleanName(title) ?? `${text.split("\n")[0].slice(0, 40).trim() || "Note"}.txt`;
+    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name2) ? name2 : `${name2}.txt`, type: TEXT_TYPE, kind: "text", preview: text.slice(0, PREVIEW_CHARS), from: from2 });
+  }
+  function addSnippet(from2, { text, space }) {
+    if (typeof text !== "string" || text.trim() === "") throw fail(400, "no text");
+    if (text.length > SNIPPET_CHARS) throw fail(400, "snippet-too-long");
+    const bytes = Buffer.from(text, "utf8");
+    return addFile([bytes], bytes.length, { space, name: "snippet.txt", type: TEXT_TYPE, kind: SNIPPET2, from: from2 });
+  }
+  async function snippetText(item) {
+    let text = snippetCache.get(item.id);
+    if (text === void 0) {
+      const pieces = [];
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece);
+      text = Buffer.concat(pieces).toString("utf8");
+      if (snippetCache.size > 500) snippetCache.delete(snippetCache.keys().next().value);
+      snippetCache.set(item.id, text);
+    }
+    return text;
+  }
+  const fullView = async (item) => item.kind === SNIPPET2 ? { ...itemView(item), text: await snippetText(item).catch((error) => {
+    logger.warn("could not read snippet %s: %s", item.id, error.message);
+    return "";
+  }) } : itemView(item);
   const itemView = (item) => ({
     id: item.id,
     space: item.space,
@@ -1993,11 +2036,11 @@ ${id}`, b642.decode(name2)));
   }
   const operations = {
     status: ({ device, person }) => ({ status: device.status, assistantName: config.assistantName, person: { id: person.id, name: person.name }, device: { id: device.id, name: device.name } }),
-    index: ({ person, device }) => ({
+    index: async ({ person, device }) => ({
       person: { id: person.id, name: person.name },
       device: device.id,
       spaces: store.spacesOf(person.id).map((space) => ({ id: space, own: space === person.id, shared: space === SHARED2 })),
-      items: store.itemsFor(person.id).map(itemView),
+      items: await Promise.all(store.itemsFor(person.id).map(fullView)),
       folders: store.foldersFor(person.id),
       uploads: uploads.listFor(device),
       pending: store.devicesOf(person.id).filter((d) => d.status === "pending").map((d) => deviceView(d, device.id)),
@@ -2023,6 +2066,7 @@ ${id}`, b642.decode(name2)));
       if (folder === null) throw fail(400, "bad folder");
       return itemView(await store.updateItem(person.id, itemId(args.id), { space: args.space, folder }));
     },
+    "snippet.put": async ({ person, args }) => fullView(await addSnippet(person.id, { text: args.text, space: args.space })),
     remove: ({ person, args }) => store.removeItem(person.id, itemId(args.id)).then(() => ({})),
     pin: async ({ person, args }) => itemView(await store.updateItem(person.id, itemId(args.id), { pinned: args.pinned === true })),
     "upload.start": ({ person, device, args }) => uploads.start(person.id, device, { space: args.space, folder: args.folder, size: args.size, prefix: b642.decode(String(args.prefix)) }),
@@ -2077,6 +2121,10 @@ ${id}`, b642.decode(name2)));
     decide,
     notify,
     itemView,
+    fullView,
+    addFile,
+    addNote,
+    addSnippet,
     deviceView,
     fileKey,
     nameOf,

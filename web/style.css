@@ -124,3 +124,22 @@ textarea.text { min-height: 40vh; resize: vertical; line-height: 1.5; }
 .btn.icon { position: relative; }
 .btn.alert { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
 .badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; pointer-events: none; }
+
+/* The clipboard: a send box and the snippets, text in full. */
+.clip { max-width: 960px; margin: 4px auto 12px; padding: 0 8px; }
+.clip-head { color: var(--muted); font-size: 13px; font-weight: 600; margin: 4px 4px 6px; }
+.clip-compose { display: flex; gap: 8px; align-items: flex-end; }
+textarea.text.clip-input { min-height: 44px; max-height: 200px; resize: none; overflow-y: auto; }
+.clip-compose .btn { min-height: 44px; flex: none; }
+.clips { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.clip-item { border: 1px solid var(--line2); border-radius: var(--radius); background: var(--layer); padding: 10px 12px 8px; transition: border-color .4s; }
+.clip-item.flash { border-color: var(--accent); }
+.clip-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.45; user-select: text; -webkit-user-select: text; max-height: 50vh; overflow-y: auto; }
+.clip-text.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.clip-item .link { background: none; border: 0; padding: 4px 0 0; color: var(--accent); cursor: pointer; font-size: 13px; }
+.clip-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.clip-foot .sub { flex: 1 1 0; min-width: 0; color: var(--faint); font-size: 12.5px; }
+@media (max-width: 560px) { .clip-foot .sub { flex-basis: 100%; } }
+.clip-foot .btn.icon.on { color: var(--accent); border-color: var(--accent); }
+.clip-copy { min-width: 96px; min-height: 40px; }
+.offscreen { position: fixed; top: 0; left: -9999px; opacity: 0; }

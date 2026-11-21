@@ -33,6 +33,8 @@ const PATHS = {
   devices: 'M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8M10 19v-3.96M7 19h5M18 12h4a0 0 0 0 1 0 0v8a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z',
   external: 'M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
   x: 'M18 6 6 18M6 6l12 12',
+  check: 'M20 6 9 17l-5-5',
+  send: 'M14.54 21.69a.5.5 0 0 0 .94-.03l6.5-19a.5.5 0 0 0-.64-.63l-19 6.5a.5.5 0 0 0-.02.93l7.93 3.18a2 2 0 0 1 1.11 1.11ZM21.85 2.15 10.91 13.09',
   pin: 'M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
   download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   copy: 'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2ZM4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2',
@@ -138,6 +140,27 @@ export function toast(text) {
   const node = el('div', { class: 'toast', role: 'status', text })
   document.body.append(node)
   setTimeout(() => node.remove(), 2600)
+}
+
+/**
+ * Put text on the system clipboard. Call it from the tap itself with the text already at hand: Safari refuses a
+ * clipboard write that comes after an await. Where the Clipboard API is missing or refused, a selected text area
+ * and the older copy command do it.
+ */
+export function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => copyBySelection(text))
+  return new Promise(done => done(copyBySelection(text)))
+}
+
+function copyBySelection(text) {
+  const area = el('textarea', { class: 'offscreen', readonly: true, 'aria-hidden': 'true' })
+  area.value = text
+  document.body.append(area)
+  area.select()
+  area.setSelectionRange(0, text.length)
+  const ok = document.execCommand('copy')
+  area.remove()
+  if (!ok) throw new Error('copy refused')
 }
 
 export function clear(node) { while (node.firstChild) node.firstChild.remove() }

@@ -1,7 +1,7 @@
 {
  "meta": {
   "title": "Sealed Files",
-  "description": "End-to-end encrypted files and notes between the people signed in to DSH and the assistant: encrypted in the browser, streamed with seeking, previewed in place."
+  "description": "End-to-end encrypted files, notes and a clipboard for short text between the people signed in to DSH and the assistant: encrypted in the browser, streamed with seeking, previewed in place."
  },
  "ui": {
   "panel": "Sealed Files",
@@ -116,6 +116,16 @@
   "card.expand": "Show files",
   "card.collapse": "Hide files",
   "card.leave": "An upload is still running here. Leaving now pauses it.",
-  "card.dismiss": "Dismiss"
+  "card.dismiss": "Dismiss",
+  "clip.title": "Clipboard",
+  "clip.placeholder": "Paste or type a short text to send",
+  "clip.send": "Send",
+  "clip.copy": "Copy",
+  "clip.copied": "Copied",
+  "clip.copyFailed": "This browser didn't allow copying. Press and hold the text to copy it.",
+  "clip.more": "Show all",
+  "clip.less": "Show less",
+  "clip.confirmDelete": "Delete this text?",
+  "error.snippet-too-long": "That's too long for the clipboard (up to {max} characters). Use New note for longer text."
  }
 }

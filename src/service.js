@@ -6,12 +6,12 @@
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { b64, deviceIdOf, openBytes, pairingCode } from '../web/seal.js'
-import { ID, SHARED, cleanFolder, cleanName } from '../web/protocol.js'
-import { readKey } from './files.js'
+import { ID, PREVIEW_CHARS, SHARED, SNIPPET, SNIPPET_CHARS, TEXT_TYPE, cleanFolder, cleanName } from '../web/protocol.js'
+import { decryptFile, encryptToFile, readKey } from './files.js'
 import { loadIdentity } from './keys.js'
 import { createPeople } from './people.js'
 import { createPreviews } from './preview.js'
-import { ASSISTANT, createStore } from './store.js'
+import { ASSISTANT, createStore, newId } from './store.js'
 import { createUploads } from './uploads.js'
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
@@ -20,10 +20,11 @@ const DEVICE_NAME = 80
 export async function createService({ config, limits, stateDir, identityFile, officeToPdf, logger }) {
   const identity = loadIdentity(identityFile)
   const people = createPeople(config, (...args) => logger.warn(...args))
-  const store = await createStore({ dir: stateDir, people, sharedSpace: config.sharedSpace, retentionDays: config.retentionDays, deviceIdleDays: config.deviceIdleDays, logger })
+  const store = await createStore({ dir: stateDir, people, sharedSpace: config.sharedSpace, retentionDays: config.retentionDays, snippetHours: config.snippetHours, deviceIdleDays: config.deviceIdleDays, logger })
   const uploads = await createUploads({ dir: stateDir, store, identity, limits, uploadDays: config.uploadDays, logger })
   const previews = createPreviews({ store, identity, officeToPdf, logger })
   const keyCache = new Map()
+  const snippetCache = new Map()
 
   /** Who did a roster change from a page: the device it came from. */
   const byDevice = device => ({ kind: 'device', person: device.person, device: device.id, name: device.name })
@@ -44,6 +45,52 @@ export async function createService({ config, limits, stateDir, identityFile, of
       logger.warn('notify command failed: %s', error.message)
     }
   }
+
+  /** Encrypt bytes to the assistant's key and add them as an item from `from` (a person id or the assistant). */
+  async function addFile(pieces, size, { space, folder = '', name, type, kind, preview = null, from }) {
+    const where = cleanFolder(folder)
+    const clean = cleanName(name)
+    if (where === null) throw fail(400, 'bad folder')
+    if (clean === null) throw fail(400, 'bad name')
+    if (!store.canSee(from, space)) throw fail(403, 'no such space')
+    await uploads.makeRoom(size + 4096)
+    const id = newId()
+    const { cipherSize, payloadAt } = await encryptToFile(pieces, size, store.itemPath(id), identity.pub)
+    const now = Date.now()
+    return store.addItem({ id, space, folder: where, name: clean, type, kind, preview, size, cipherSize, payloadAt, from: { person: from }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from === ASSISTANT })
+  }
+
+  /** A note: text stored as a file, with its start kept as the preview. */
+  function addNote(from, { text, space, folder, title }) {
+    if (typeof text !== 'string' || text === '') throw fail(400, 'no text')
+    const bytes = Buffer.from(text, 'utf8')
+    const name = cleanName(title) ?? `${text.split('\n')[0].slice(0, 40).trim() || 'Note'}.txt`
+    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name) ? name : `${name}.txt`, type: TEXT_TYPE, kind: 'text', preview: text.slice(0, PREVIEW_CHARS), from })
+  }
+
+  /** A clipboard snippet: short text with a short life. Its text stays in its encrypted file, never in the index. */
+  function addSnippet(from, { text, space }) {
+    if (typeof text !== 'string' || text.trim() === '') throw fail(400, 'no text')
+    if (text.length > SNIPPET_CHARS) throw fail(400, 'snippet-too-long')
+    const bytes = Buffer.from(text, 'utf8')
+    return addFile([bytes], bytes.length, { space, name: 'snippet.txt', type: TEXT_TYPE, kind: SNIPPET, from })
+  }
+
+  /** A snippet's text, read from its file once and kept in memory while it lives. */
+  async function snippetText(item) {
+    let text = snippetCache.get(item.id)
+    if (text === undefined) {
+      const pieces = []
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece)
+      text = Buffer.concat(pieces).toString('utf8')
+      if (snippetCache.size > 500) snippetCache.delete(snippetCache.keys().next().value)
+      snippetCache.set(item.id, text)
+    }
+    return text
+  }
+
+  /** An item as a page or the assistant sees it, with a snippet's text. */
+  const fullView = async item => (item.kind === SNIPPET ? { ...itemView(item), text: await snippetText(item).catch((error) => { logger.warn('could not read snippet %s: %s', item.id, error.message); return '' }) } : itemView(item))
 
   /** What a page may know about an item. */
   const itemView = item => ({
@@ -145,11 +192,11 @@ export async function createService({ config, limits, stateDir, identityFile, of
   /** The operations a device runs through its sealed channel. */
   const operations = {
     status: ({ device, person }) => ({ status: device.status, assistantName: config.assistantName, person: { id: person.id, name: person.name }, device: { id: device.id, name: device.name } }),
-    index: ({ person, device }) => ({
+    index: async ({ person, device }) => ({
       person: { id: person.id, name: person.name },
       device: device.id,
       spaces: store.spacesOf(person.id).map(space => ({ id: space, own: space === person.id, shared: space === SHARED })),
-      items: store.itemsFor(person.id).map(itemView),
+      items: await Promise.all(store.itemsFor(person.id).map(fullView)),
       folders: store.foldersFor(person.id),
       uploads: uploads.listFor(device),
       pending: store.devicesOf(person.id).filter(d => d.status === 'pending').map(d => deviceView(d, device.id)),
@@ -175,6 +222,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
       if (folder === null) throw fail(400, 'bad folder')
       return itemView(await store.updateItem(person.id, itemId(args.id), { space: args.space, folder }))
     },
+    'snippet.put': async ({ person, args }) => fullView(await addSnippet(person.id, { text: args.text, space: args.space })),
     remove: ({ person, args }) => store.removeItem(person.id, itemId(args.id)).then(() => ({})),
     pin: async ({ person, args }) => itemView(await store.updateItem(person.id, itemId(args.id), { pinned: args.pinned === true })),
     'upload.start': ({ person, device, args }) => uploads.start(person.id, device, { space: args.space, folder: args.folder, size: args.size, prefix: b64.decode(String(args.prefix)) }),
@@ -230,6 +278,10 @@ export async function createService({ config, limits, stateDir, identityFile, of
     decide,
     notify,
     itemView,
+    fullView,
+    addFile,
+    addNote,
+    addSnippet,
     deviceView,
     fileKey,
     nameOf,

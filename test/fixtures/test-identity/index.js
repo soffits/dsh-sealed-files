@@ -2,7 +2,8 @@
  * Test stand-in for a sign-in plugin: every /api request is the person named
  * by the browser's `test-person` cookie (default `tester`), scoped the way a
  * real one does it (DSH's `connection/request` hook). Two routes do what the
- * assistant does through its tool: approve a device, put a note in.
+ * assistant does through its tool: approve a device, put a note, a file or a
+ * clipboard snippet in.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 
@@ -27,6 +28,11 @@ export function apply(ctx) {
     const { createAssistant } = await import(process.env.SEALED_FILES_ASSISTANT)
     const { text, space } = await request.json()
     return Response.json(await createAssistant({ service: service(), outDir: '/tmp', origin: () => '' }).text({ text, space }))
+  } })
+  ctx.connection.fetch.register({ path: '/api/sealed-files-test/snippet', methods: ['POST'], requestBody: 'buffered', fetch: async (request) => {
+    const { createAssistant } = await import(process.env.SEALED_FILES_ASSISTANT)
+    const { text, space } = await request.json()
+    return Response.json(await createAssistant({ service: service(), outDir: '/tmp', origin: () => '' }).snippet({ text, space }))
   } })
   ctx.connection.fetch.register({ path: '/api/sealed-files-test/put', methods: ['POST'], requestBody: 'buffered', fetch: async (request) => {
     const { createAssistant } = await import(process.env.SEALED_FILES_ASSISTANT)

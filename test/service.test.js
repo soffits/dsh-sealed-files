@@ -16,7 +16,7 @@ import { createAssistant } from '../src/assistant.js'
 import { limitsOf, Config } from '../src/config.js'
 import { createService } from '../src/service.js'
 import * as age from '../web/age.js'
-import { PART_BYTES, partShape } from '../web/protocol.js'
+import { PART_BYTES, SNIPPET_CHARS, partShape } from '../web/protocol.js'
 import { b64, derivePairKey, deviceIdOf, openResponse, pairingCode, sealBytes, sealRequest } from '../web/seal.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -234,7 +234,7 @@ test('limits refuse a file over the size cap', async () => {
 test('every tool answer is plain JSON (no undefined anywhere)', async () => {
   const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
   const pending = await makeDevice('sub-b')
-  const answers = [await assistant.list({}), assistant.devices({}), assistant.spaces(), await assistant.text({ text: 'x', space: 'bob' })]
+  const answers = [await assistant.list({}), assistant.devices({}), assistant.spaces(), await assistant.text({ text: 'x', space: 'bob' }), await assistant.snippet({ text: 'y', space: 'bob' })]
   for (const answer of answers) assert.deepEqual(JSON.parse(JSON.stringify(answer)), answer)
   assert.ok(assistant.devices({}).some(d => d.id === pending.id && d.code))
 })
@@ -264,4 +264,41 @@ test('every change to the device list is logged with who made it', async () => {
   assert.deepEqual(of(revoked.id), [['pair', { kind: 'person', person: 'bob' }], ['revoke', { kind: 'assistant' }]])
   assert.deepEqual(of(stale.id).at(-1), ['sweep', { kind: 'sweep', reason: 'pending over a day' }])
   for (const line of log) assert.ok(!Number.isNaN(Date.parse(line.at)) && line.device.person && line.device.status)
+})
+
+test('clipboard snippets: sent in one call, text only in the sealed answer, a day to live unless kept', async () => {
+  const HOUR = 3_600_000
+  const sent = await result(alice, 'snippet.put', { space: 'alice', text: 'wifi pass: Correct-Horse 42' })
+  assert.equal(sent.kind, 'snippet')
+  assert.equal(sent.text, 'wifi pass: Correct-Horse 42')
+  assert.ok(Math.abs(sent.expires - (Date.now() + 24 * HOUR)) < 60_000, 'a snippet lives a day')
+  const seen = (await result(alice, 'index')).items.find(i => i.id === sent.id)
+  assert.equal(seen.text, 'wifi pass: Correct-Horse 42')
+  await service.store.flush()
+  assert.ok(!readFileSync(join(dir, 'state/index.json'), 'utf8').includes('Correct-Horse'), 'the text is not in the index file')
+  assert.ok(!readFileSync(join(dir, `state/items/${sent.id}.age`)).includes(Buffer.from('Correct-Horse')), 'the stored file is encrypted')
+
+  assert.ok(!(await result(bob, 'index')).items.some(i => i.id === sent.id))
+  assert.equal((await call(bob, 'snippet.put', { space: 'alice', text: 'hi' })).status, 403)
+  assert.equal((await call(alice, 'snippet.put', { space: 'alice', text: '   ' })).status, 400)
+  assert.equal((await call(alice, 'snippet.put', { space: 'alice', text: 'x'.repeat(SNIPPET_CHARS + 1) })).error, 'snippet-too-long')
+
+  // The assistant reads what arrived, with the text, and puts one in.
+  const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
+  const arrived = (await assistant.list({ unseen: true })).items.find(i => i.id === sent.id)
+  assert.equal(arrived.text, 'wifi pass: Correct-Horse 42')
+  assert.equal((await assistant.get({ id: sent.id })).text, 'wifi pass: Correct-Horse 42')
+  const code = await assistant.snippet({ text: '481 552', space: 'alice' })
+  assert.equal(code.unseen, false)
+  assert.equal((await result(alice, 'index')).items.find(i => i.id === code.id).text, '481 552')
+  await assert.rejects(assistant.snippet({ text: 'x', space: 'nobody' }), /unknown space/)
+
+  // A kept snippet stays; let go, it has a day again; files outlive both.
+  await result(alice, 'pin', { id: code.id, pinned: true })
+  const file = await assistant.text({ text: 'a note', space: 'alice' })
+  await service.store.sweep(Date.now() + 2 * 24 * HOUR)
+  const left = (await result(alice, 'index')).items.map(i => i.id)
+  assert.ok(!left.includes(sent.id) && left.includes(code.id) && left.includes(file.id))
+  const unpinned = await result(alice, 'pin', { id: code.id, pinned: false })
+  assert.ok(Math.abs(unpinned.expires - (Date.now() + 24 * HOUR)) < 60_000)
 })

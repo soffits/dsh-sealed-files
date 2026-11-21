@@ -1,7 +1,7 @@
 {
  "meta": {
   "title": "加密文件",
-  "description": "登录 DSH 的人和助手之间端到端加密的文件和文字：在浏览器里加密，边下边播能拖进度，直接预览。"
+  "description": "登录 DSH 的人和助手之间端到端加密的文件、文字和剪贴板：在浏览器里加密，边下边播能拖进度，直接预览。"
  },
  "ui": {
   "panel": "加密文件",
@@ -116,6 +116,16 @@
   "card.expand": "展开",
   "card.collapse": "收起",
   "card.leave": "这里还有文件在上传，现在离开会暂停。",
-  "card.dismiss": "关掉"
+  "card.dismiss": "关掉",
+  "clip.title": "剪贴板",
+  "clip.placeholder": "粘贴或输入一小段文字发送",
+  "clip.send": "发送",
+  "clip.copy": "复制",
+  "clip.copied": "已复制",
+  "clip.copyFailed": "这个浏览器不让复制，长按文字手动复制吧。",
+  "clip.more": "展开全部",
+  "clip.less": "收起",
+  "clip.confirmDelete": "删除这段文字？",
+  "error.snippet-too-long": "太长了，剪贴板最多 {max} 个字。长一点的文字请用“新建文字”。"
  }
 }

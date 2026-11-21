@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- A clipboard at the top of each space for short text: paste or type, press Send, and it is there on every device at once. Each snippet shows its whole text with a Copy button that copies in one tap (also on iPhone), plus Keep and Delete. Snippets are deleted after a day unless kept (`snippetHours`, default 24).
+- A snippet is an ordinary item of kind `snippet`, encrypted to the assistant's key like every file. It is sent in one sealed request and its text reaches devices only inside the sealed file list; the file list on disk never holds it.
+- The assistant's tool has a `snippet` action to put one in, and `list` and `get` return a snippet's text.
+
 ## 0.3.4
 
 - Every change to the device list is logged in `<stateDir>/devices.jsonl` with who made it: pairing, approving and rejecting (in the panel or from outside), renaming, removing from the panel, the assistant's revoke and the sweep of stale or unused devices. Before, only decisions from outside were logged, so a device removed in the panel or swept left no trace.

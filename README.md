@@ -5,8 +5,9 @@ End-to-end encrypted files and notes for [DeepSeek Harness](https://github.com/d
 - Upload from any browser, phone or desktop, in resumable parts: a dropped connection, a reload or a DSH restart costs only the part in flight.
 - Videos stream and seek, pictures, PDFs, audio and text open in place, all decrypted on the device as they are read. Office files get a PDF preview through DSH's own converter when it is there.
 - Notes: write or paste text, copy it back out.
+- A clipboard at the top of each space for short text (a link, a code, an error line): paste and send in one step, every snippet shown in full with a one-tap copy button, gone after a day unless kept.
 - A small folder tree in each space. Each person has their own space, and everyone shares one.
-- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files and notes in, list and remove devices.
+- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files, notes and clipboard snippets in, list and remove devices.
 - Every stored file is a standard [age](https://age-encryption.org) file encrypted to the assistant's key: `age -d -i identity.txt items/<id>.age` opens it without this plugin.
 
 ## How the encryption works
@@ -55,6 +56,7 @@ Override the `sealed-files` row in your profile's `cordis.patch.yml`:
 | `assistantName` | | Shown as the sender of what the assistant puts in and on the pairing screen. |
 | `maxFileGb`, `maxStoreGb`, `minFreeGb` | 4, 10, 6 | One upload's limit, the store's limit, and the free disk space an upload must leave. |
 | `retentionDays` | 30 | Files are deleted this long after they arrive unless pinned. |
+| `snippetHours` | 24 | Clipboard snippets are deleted this many hours after they arrive unless pinned. |
 | `uploadDays` | 3 | Unfinished uploads are dropped after this long without a new part. |
 | `deviceIdleDays` | 90 | Devices unused this long are removed. |
 
