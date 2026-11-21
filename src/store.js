@@ -29,10 +29,17 @@ export async function createStore({ dir, people, sharedSpace, retentionDays, sni
   const devicesFile = join(dir, 'devices.json')
   const rosterLog = join(dir, 'devices.jsonl')
   const index = { items: {}, folders: {}, ...(await readJson(indexFile)) }
+  // Before 0.4.1 the start of a note was kept in the index in the clear; its text lives only in its file now.
+  const clearText = Object.values(index.items).filter(item => 'preview' in item)
+  for (const item of clearText) delete item.preview
   const roster = { devices: {}, ...(await readJson(devicesFile)) }
   const listeners = new Set()
   let version = 0
   let saving = Promise.resolve()
+  if (clearText.length > 0) {
+    await save([[indexFile, index]])
+    logger.info('removed the stored previews of %d notes from the index', clearText.length)
+  }
 
   async function readJson(file) {
     try {

@@ -193,7 +193,7 @@ async function main() {
     await p.locator('input[placeholder="Title (optional)"]').fill('Hotel booking')
     await p.locator('.sheet-wrap textarea').fill('Confirmation 7731-QX\nCheck-in 15:00, room 412')
     await p.getByRole('button', { name: 'Save note' }).click()
-    await p.locator('.row', { hasText: 'Hotel booking.txt' }).waitFor()
+    await p.locator('.row .snippet', { hasText: 'Confirmation 7731-QX' }).waitFor()
     if (shots) await p.screenshot({ path: join(shots, 'phone-list.png') })
 
     await p.locator('.row', { hasText: 'beach-walk.mp4' }).click()
@@ -308,6 +308,12 @@ async function main() {
       await p.screenshot({ path: join(shots, 'phone-clipboard.png') })
       await d.screenshot({ path: join(shots, 'desktop-clipboard.png') })
     }
+    // Copy text in an opened note: the write starts within the tap while the text is still being decrypted.
+    await frame.locator('.row', { hasText: 'Hotel booking.txt' }).click()
+    await frame.getByRole('button', { name: 'Copy text' }).click()
+    await frame.getByText('Copied').waitFor()
+    assert.equal(await frame.locator('body').evaluate(() => navigator.clipboard.readText()), 'Confirmation 7731-QX\nCheck-in 15:00, room 412')
+    await frame.getByRole('button', { name: 'Close' }).click()
     // Kept, then deleted from the phone.
     const phoneClip = p.locator('.clip-item', { hasText: 'Door code 7319#' })
     await phoneClip.getByRole('button', { name: 'Keep' }).click()

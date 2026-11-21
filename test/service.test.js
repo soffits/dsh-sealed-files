@@ -3,7 +3,7 @@
  * the page makes them (WebCrypto X25519, the same seal and age modules).
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -15,8 +15,9 @@ import { followDecisions } from '../src/decisions.js'
 import { createAssistant } from '../src/assistant.js'
 import { limitsOf, Config } from '../src/config.js'
 import { createService } from '../src/service.js'
+import { createStore } from '../src/store.js'
 import * as age from '../web/age.js'
-import { PART_BYTES, SNIPPET_CHARS, partShape } from '../web/protocol.js'
+import { PART_BYTES, PREVIEW_CHARS, SNIPPET_CHARS, partShape } from '../web/protocol.js'
 import { b64, derivePairKey, deviceIdOf, openResponse, pairingCode, sealBytes, sealRequest } from '../web/seal.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -301,4 +302,26 @@ test('clipboard snippets: sent in one call, text only in the sealed answer, a da
   assert.ok(!left.includes(sent.id) && left.includes(code.id) && left.includes(file.id))
   const unpinned = await result(alice, 'pin', { id: code.id, pinned: false })
   assert.ok(Math.abs(unpinned.expires - (Date.now() + 24 * HOUR)) < 60_000)
+})
+
+test('a note\'s preview reaches devices only sealed, never stored in the clear', async () => {
+  const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
+  const long = `Gate B-17 boards 14:05\n${'界'.repeat(PREVIEW_CHARS * 3)}`
+  const note = await assistant.text({ text: long, space: 'alice', title: 'Boarding' })
+  const listed = (await result(alice, 'index')).items.find(i => i.id === note.id)
+  assert.equal(listed.preview, long.slice(0, PREVIEW_CHARS))
+  await service.store.flush()
+  const stored = readFileSync(join(dir, 'state/index.json'), 'utf8')
+  assert.ok(!stored.includes('B-17') && !stored.includes('"preview"'), 'no note text in the index')
+})
+
+test('previews an older version stored in the index are removed on start', async () => {
+  const old = join(dir, 'old-state')
+  mkdirSync(old)
+  const item = { id: 'aaaaaaaaaaaaaaaa', space: 'alice', folder: '', name: 'n.txt', kind: 'text', preview: 'pin 4471', size: 8, created: 1, expires: null, pinned: true, from: { person: 'alice' } }
+  writeFileSync(join(old, 'index.json'), JSON.stringify({ items: { [item.id]: item }, folders: {} }))
+  const store = await createStore({ dir: old, people: { all: () => [] }, sharedSpace: true, retentionDays: 30, snippetHours: 24, deviceIdleDays: 90, logger: quiet })
+  await store.flush()
+  assert.equal(store.item(item.id).preview, undefined)
+  assert.ok(!readFileSync(join(old, 'index.json'), 'utf8').includes('4471'))
 })

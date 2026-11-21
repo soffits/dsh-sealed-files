@@ -1410,10 +1410,16 @@ async function createStore({ dir, people, sharedSpace, retentionDays, snippetHou
   const devicesFile = join2(dir, "devices.json");
   const rosterLog = join2(dir, "devices.jsonl");
   const index = { items: {}, folders: {}, ...await readJson(indexFile) };
+  const clearText = Object.values(index.items).filter((item) => "preview" in item);
+  for (const item of clearText) delete item.preview;
   const roster = { devices: {}, ...await readJson(devicesFile) };
   const listeners = /* @__PURE__ */ new Set();
   let version2 = 0;
   let saving = Promise.resolve();
+  if (clearText.length > 0) {
+    await save([[indexFile, index]]);
+    logger.info("removed the stored previews of %d notes from the index", clearText.length);
+  }
   async function readJson(file) {
     try {
       return JSON.parse(await readFile3(file, "utf8"));
@@ -1834,7 +1840,6 @@ async function createUploads({ dir, store, identity, limits, uploadDays, logger 
       name: about.name,
       type: about.type,
       kind: about.kind,
-      preview: about.preview ?? null,
       size: meta.size,
       cipherSize: meta.cipherSize,
       payloadAt: meta.payloadAt,
@@ -1889,7 +1894,7 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
   const uploads = await createUploads({ dir: stateDir, store, identity, limits, uploadDays: config.uploadDays, logger });
   const previews = createPreviews({ store, identity, officeToPdf, logger });
   const keyCache = /* @__PURE__ */ new Map();
-  const snippetCache = /* @__PURE__ */ new Map();
+  const textCache = /* @__PURE__ */ new Map();
   const byDevice = (device) => ({ kind: "device", person: device.person, device: device.id, name: device.name });
   const nameOf = (person) => person === ASSISTANT ? null : people.all().find((p) => p.id === person)?.name ?? person;
   function notify(event) {
@@ -1911,7 +1916,7 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
       logger.warn("notify command failed: %s", error.message);
     }
   }
-  async function addFile(pieces, size, { space, folder = "", name: name2, type, kind, preview = null, from: from2 }) {
+  async function addFile(pieces, size, { space, folder = "", name: name2, type, kind, from: from2 }) {
     const where = cleanFolder3(folder);
     const clean = cleanName(name2);
     if (where === null) throw fail(400, "bad folder");
@@ -1921,13 +1926,13 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
     const id = newId();
     const { cipherSize, payloadAt } = await encryptToFile(pieces, size, store.itemPath(id), identity.pub);
     const now = Date.now();
-    return store.addItem({ id, space, folder: where, name: clean, type, kind, preview, size, cipherSize, payloadAt, from: { person: from2 }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from2 === ASSISTANT });
+    return store.addItem({ id, space, folder: where, name: clean, type, kind, size, cipherSize, payloadAt, from: { person: from2 }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from2 === ASSISTANT });
   }
   function addNote(from2, { text, space, folder, title }) {
     if (typeof text !== "string" || text === "") throw fail(400, "no text");
     const bytes = Buffer.from(text, "utf8");
     const name2 = cleanName(title) ?? `${text.split("\n")[0].slice(0, 40).trim() || "Note"}.txt`;
-    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name2) ? name2 : `${name2}.txt`, type: TEXT_TYPE, kind: "text", preview: text.slice(0, PREVIEW_CHARS), from: from2 });
+    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name2) ? name2 : `${name2}.txt`, type: TEXT_TYPE, kind: "text", from: from2 });
   }
   function addSnippet(from2, { text, space }) {
     if (typeof text !== "string" || text.trim() === "") throw fail(400, "no text");
@@ -1935,21 +1940,33 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
     const bytes = Buffer.from(text, "utf8");
     return addFile([bytes], bytes.length, { space, name: "snippet.txt", type: TEXT_TYPE, kind: SNIPPET2, from: from2 });
   }
-  async function snippetText(item) {
-    let text = snippetCache.get(item.id);
+  async function shownText(item) {
+    let text = textCache.get(item.id);
     if (text === void 0) {
+      const limit = item.kind === SNIPPET2 ? item.size : PREVIEW_CHARS * 4;
       const pieces = [];
-      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece);
-      text = Buffer.concat(pieces).toString("utf8");
-      if (snippetCache.size > 500) snippetCache.delete(snippetCache.keys().next().value);
-      snippetCache.set(item.id, text);
+      let read = 0;
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) {
+        pieces.push(piece);
+        read += piece.length;
+        if (read >= limit) break;
+      }
+      const bytes = Buffer.concat(pieces);
+      text = bytes.length < item.size ? bytes.toString("utf8").slice(0, PREVIEW_CHARS).replace(/\uFFFD$/, "") : bytes.toString("utf8");
+      if (textCache.size > 500) textCache.delete(textCache.keys().next().value);
+      textCache.set(item.id, text);
     }
     return text;
   }
-  const fullView = async (item) => item.kind === SNIPPET2 ? { ...itemView(item), text: await snippetText(item).catch((error) => {
-    logger.warn("could not read snippet %s: %s", item.id, error.message);
+  const readable = (item) => shownText(item).catch((error) => {
+    logger.warn("could not read %s: %s", item.id, error.message);
     return "";
-  }) } : itemView(item);
+  });
+  async function fullView(item) {
+    if (item.kind === SNIPPET2) return { ...itemView(item), text: await readable(item) };
+    if (item.kind === "text") return { ...itemView(item), preview: (await readable(item)).slice(0, PREVIEW_CHARS) };
+    return itemView(item);
+  }
   const itemView = (item) => ({
     id: item.id,
     space: item.space,
@@ -1961,8 +1978,7 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
     from: { person: item.from.person, name: nameOf(item.from.person) },
     created: item.created,
     expires: item.expires,
-    pinned: item.pinned,
-    preview: item.preview
+    pinned: item.pinned
   });
   const deviceView = (device, current) => ({
     id: device.id,
@@ -2075,8 +2091,7 @@ ${id}`, b642.decode(name2)));
       const name2 = cleanName(args.name);
       if (name2 === null) throw fail(400, "bad name");
       const type = typeof args.type === "string" && /^[\w.+-]+\/[\w.+-]+(;[\w=.-]+)?$/.test(args.type) ? args.type : "application/octet-stream";
-      const preview = typeof args.preview === "string" ? args.preview.slice(0, 2e3) : null;
-      return itemView(await uploads.finish(device, args.id, { name: name2, type, kind: args.kind === "text" ? "text" : "file", preview }));
+      return fullView(await uploads.finish(device, args.id, { name: name2, type, kind: args.kind === "text" ? "text" : "file" }));
     },
     "upload.cancel": ({ device, args }) => uploads.cancel(device, args.id).then(() => ({})),
     devices: ({ person, device }) => store.devicesOf(person.id).map((d) => deviceView(d, device.id)),

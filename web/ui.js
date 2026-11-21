@@ -143,13 +143,21 @@ export function toast(text) {
 }
 
 /**
- * Put text on the system clipboard. Call it from the tap itself with the text already at hand: Safari refuses a
- * clipboard write that comes after an await. Where the Clipboard API is missing or refused, a selected text area
- * and the older copy command do it.
+ * Put text on the system clipboard. Call it from the tap itself: Safari refuses a clipboard write that starts after
+ * an await. Text still on its way is a promise, handed to a ClipboardItem, which Safari lets resolve after the tap.
+ * Where the Clipboard API is missing or refused, a selected text area and the older copy command do it.
  */
 export function copyText(text) {
+  if (typeof text !== 'string' && typeof ClipboardItem === 'function' && navigator.clipboard?.write) {
+    const blob = Promise.resolve(text).then(value => new Blob([value], { type: 'text/plain' }))
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]).catch(() => Promise.resolve(text).then(copyNow))
+  }
+  return Promise.resolve(text).then(copyNow)
+}
+
+function copyNow(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => copyBySelection(text))
-  return new Promise(done => done(copyBySelection(text)))
+  return copyBySelection(text)
 }
 
 function copyBySelection(text) {

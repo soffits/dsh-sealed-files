@@ -6,7 +6,7 @@
 import { streamUrl } from './device.js'
 import { typeOf } from './types.js'
 import { bytes, dateTime, t, when } from './i18n.js'
-import { ask, confirmed, el, icon, sheet, toast } from './ui.js'
+import { ask, confirmed, copyText, el, icon, sheet, toast } from './ui.js'
 
 /** Phones save through the share sheet (Save to Files, Save Image), which must open within the tap: small files are fetched as the item opens. */
 const SHARE_LIMIT = 50 * 1024 * 1024
@@ -75,11 +75,10 @@ export function openItem(app, item) {
     setTimeout(() => frame.remove(), 120_000)
   }
 
-  async function copy(current) {
-    await opened
-    const text = await checked(streamUrl(current.id)).then(r => r.text())
-    await navigator.clipboard.writeText(text)
-    toast(t('copied'))
+  function copy(current) {
+    // The write starts within the tap and the text follows (see copyText), or Safari refuses it.
+    const text = opened.then(() => checked(streamUrl(current.id))).then(r => r.text())
+    copyText(text).then(() => toast(t('copied')), () => toast(t('clip.copyFailed')))
   }
 
   async function rename(current) {
