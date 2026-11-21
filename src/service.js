@@ -24,7 +24,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
   const uploads = await createUploads({ dir: stateDir, store, identity, limits, uploadDays: config.uploadDays, logger })
   const previews = createPreviews({ store, identity, officeToPdf, logger })
   const keyCache = new Map()
-  const snippetCache = new Map()
+  const textCache = new Map()
 
   /** Who did a roster change from a page: the device it came from. */
   const byDevice = device => ({ kind: 'device', person: device.person, device: device.id, name: device.name })
@@ -47,7 +47,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
   }
 
   /** Encrypt bytes to the assistant's key and add them as an item from `from` (a person id or the assistant). */
-  async function addFile(pieces, size, { space, folder = '', name, type, kind, preview = null, from }) {
+  async function addFile(pieces, size, { space, folder = '', name, type, kind, from }) {
     const where = cleanFolder(folder)
     const clean = cleanName(name)
     if (where === null) throw fail(400, 'bad folder')
@@ -57,15 +57,15 @@ export async function createService({ config, limits, stateDir, identityFile, of
     const id = newId()
     const { cipherSize, payloadAt } = await encryptToFile(pieces, size, store.itemPath(id), identity.pub)
     const now = Date.now()
-    return store.addItem({ id, space, folder: where, name: clean, type, kind, preview, size, cipherSize, payloadAt, from: { person: from }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from === ASSISTANT })
+    return store.addItem({ id, space, folder: where, name: clean, type, kind, size, cipherSize, payloadAt, from: { person: from }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from === ASSISTANT })
   }
 
-  /** A note: text stored as a file, with its start kept as the preview. */
+  /** A note: text stored as a file. */
   function addNote(from, { text, space, folder, title }) {
     if (typeof text !== 'string' || text === '') throw fail(400, 'no text')
     const bytes = Buffer.from(text, 'utf8')
     const name = cleanName(title) ?? `${text.split('\n')[0].slice(0, 40).trim() || 'Note'}.txt`
-    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name) ? name : `${name}.txt`, type: TEXT_TYPE, kind: 'text', preview: text.slice(0, PREVIEW_CHARS), from })
+    return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name) ? name : `${name}.txt`, type: TEXT_TYPE, kind: 'text', from })
   }
 
   /** A clipboard snippet: short text with a short life. Its text stays in its encrypted file, never in the index. */
@@ -76,21 +76,37 @@ export async function createService({ config, limits, stateDir, identityFile, of
     return addFile([bytes], bytes.length, { space, name: 'snippet.txt', type: TEXT_TYPE, kind: SNIPPET, from })
   }
 
-  /** A snippet's text, read from its file once and kept in memory while it lives. */
-  async function snippetText(item) {
-    let text = snippetCache.get(item.id)
+  /**
+   * The text a list shows for an item: a snippet's whole text, a note's first PREVIEW_CHARS characters. Read from its
+   * encrypted file (only the chunks needed) and kept in memory, never written down in the clear.
+   */
+  async function shownText(item) {
+    let text = textCache.get(item.id)
     if (text === undefined) {
+      const limit = item.kind === SNIPPET ? item.size : PREVIEW_CHARS * 4
       const pieces = []
-      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece)
-      text = Buffer.concat(pieces).toString('utf8')
-      if (snippetCache.size > 500) snippetCache.delete(snippetCache.keys().next().value)
-      snippetCache.set(item.id, text)
+      let read = 0
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) {
+        pieces.push(piece)
+        read += piece.length
+        if (read >= limit) break
+      }
+      const bytes = Buffer.concat(pieces)
+      text = bytes.length < item.size ? bytes.toString('utf8').slice(0, PREVIEW_CHARS).replace(/\uFFFD$/, '') : bytes.toString('utf8')
+      if (textCache.size > 500) textCache.delete(textCache.keys().next().value)
+      textCache.set(item.id, text)
     }
     return text
   }
 
-  /** An item as a page or the assistant sees it, with a snippet's text. */
-  const fullView = async item => (item.kind === SNIPPET ? { ...itemView(item), text: await snippetText(item).catch((error) => { logger.warn('could not read snippet %s: %s', item.id, error.message); return '' }) } : itemView(item))
+  const readable = item => shownText(item).catch((error) => { logger.warn('could not read %s: %s', item.id, error.message); return '' })
+
+  /** An item as a page or the assistant sees it: a snippet with its text, a note with its preview. */
+  async function fullView(item) {
+    if (item.kind === SNIPPET) return { ...itemView(item), text: await readable(item) }
+    if (item.kind === 'text') return { ...itemView(item), preview: (await readable(item)).slice(0, PREVIEW_CHARS) }
+    return itemView(item)
+  }
 
   /** What a page may know about an item. */
   const itemView = item => ({
@@ -105,7 +121,6 @@ export async function createService({ config, limits, stateDir, identityFile, of
     created: item.created,
     expires: item.expires,
     pinned: item.pinned,
-    preview: item.preview,
   })
 
   const deviceView = (device, current) => ({
@@ -231,8 +246,7 @@ export async function createService({ config, limits, stateDir, identityFile, of
       const name = cleanName(args.name)
       if (name === null) throw fail(400, 'bad name')
       const type = typeof args.type === 'string' && /^[\w.+-]+\/[\w.+-]+(;[\w=.-]+)?$/.test(args.type) ? args.type : 'application/octet-stream'
-      const preview = typeof args.preview === 'string' ? args.preview.slice(0, 2000) : null
-      return itemView(await uploads.finish(device, args.id, { name, type, kind: args.kind === 'text' ? 'text' : 'file', preview }))
+      return fullView(await uploads.finish(device, args.id, { name, type, kind: args.kind === 'text' ? 'text' : 'file' }))
     },
     'upload.cancel': ({ device, args }) => uploads.cancel(device, args.id).then(() => ({})),
     devices: ({ person, device }) => store.devicesOf(person.id).map(d => deviceView(d, device.id)),

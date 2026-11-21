@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- Copy text in an opened note works on iPhone Safari and home-screen apps: the clipboard write starts within the tap and the text follows as it is decrypted. Before, Safari refused the write because it came after the download.
+- A note's preview is no longer stored in `index.json` in the clear: the host reads it from the encrypted file when it builds a device's sealed list. Previews an older version stored are removed from the index on start.
+
 ## 0.4.0
 
 - A clipboard at the top of each space for short text: paste or type, press Send, and it is there on every device at once. Each snippet shows its whole text with a Copy button that copies in one tap (also on iPhone), plus Keep and Delete. Snippets are deleted after a day unless kept (`snippetHours`, default 24).

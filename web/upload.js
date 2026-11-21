@@ -9,7 +9,7 @@ import { FILE_KEY_BYTES, NONCE_BYTES, concat, encodeHeader, payloadKey, random, 
 import { b64 } from './seal.js'
 import { sha256 } from './vendor.js'
 import { api, call, idb, openLocal, sealLocal } from './device.js'
-import { PARTS_IN_FLIGHT, PART_BYTES, PART_CHUNKS, PREVIEW_CHARS, TEXT_TYPE, partCount } from './protocol.js'
+import { PARTS_IN_FLIGHT, PART_BYTES, PART_CHUNKS, TEXT_TYPE, partCount } from './protocol.js'
 
 const RETRIES = 6
 const sleep = ms => new Promise(done => setTimeout(done, ms))
@@ -95,9 +95,7 @@ export async function upload(device, file, { space, folder, kind = 'file', keep 
     while (queue.length > 0) await sendPart(queue.shift())
   }))
 
-  let preview = null
-  if (kind === 'text') preview = new TextDecoder().decode(await file.slice(0, PREVIEW_CHARS * 4).arrayBuffer()).slice(0, PREVIEW_CHARS)
-  const item = await call(device, 'upload.finish', { id: record.id, name: file.name, type: kind === 'text' ? TEXT_TYPE : file.type || 'application/octet-stream', kind, preview })
+  const item = await call(device, 'upload.finish', { id: record.id, name: file.name, type: kind === 'text' ? TEXT_TYPE : file.type || 'application/octet-stream', kind })
   await idb.delete('uploads', key)
   return item
 }
