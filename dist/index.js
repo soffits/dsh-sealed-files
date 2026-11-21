@@ -272,7 +272,7 @@ function createAppHandler({ connection }) {
   };
 }
 
-// ../dsh-sealed-files/node_modules/@deepseek-ai/cosmokit/lib/index.js
+// node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
   return value === null || value === void 0;
 }
@@ -497,7 +497,7 @@ var Time;
   Time2.template = template;
 })(Time || (Time = {}));
 
-// ../dsh-sealed-files/node_modules/@deepseek-ai/schemastery/lib/index.mjs
+// node_modules/@deepseek-ai/schemastery/lib/index.mjs
 var kSchema = /* @__PURE__ */ Symbol.for("schemastery");
 var kValidationError = /* @__PURE__ */ Symbol.for("ValidationError");
 globalThis.__schemastery_index__ ??= 0;
