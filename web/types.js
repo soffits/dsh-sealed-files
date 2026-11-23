@@ -1,6 +1,8 @@
 /**
  * Media types by file extension, for files whose type wasn't given (put by the assistant, or a browser that sent
- * none). A phone's share sheet picks its apps by this type: Books needs application/epub+zip, Photos an image type.
+ * none). A phone's share sheet picks its apps by this type (Photos for an image, players for a video). It does
+ * not bring up Books or reader apps for a book: WebKit hands a web page's shared file over as data, not as a file,
+ * and those apps take files only; a book reaches them through Save to Files.
  */
 const BY_EXTENSION = {
   epub: 'application/epub+zip', pdf: 'application/pdf', mobi: 'application/x-mobipocket-ebook', azw3: 'application/vnd.amazon.ebook', fb2: 'application/x-fictionbook+xml',

@@ -37,6 +37,7 @@ Trusted: the DSH host (it holds the assistant's key and can read everything) and
 - **Resuming after a reload or a closed tab**: where the browser gives a file handle (Chromium's file picker and drag and drop), it is kept with the resume record and the upload continues without picking the file again (asking for permission once). Safari has no handles, so there the card says plainly that what was sent is kept and picking the same file goes on from there. A warning on leaving the page shows only while an upload runs that can't pick itself up again.
 - **Background Fetch is not used**: Chromium only, and it needs the bytes encrypted before the fetch starts, which means holding the whole ciphertext.
 - **The transfers card is plain DOM on the page's body** (`web/card.js`, `web/card.css`), shared by the DSH page and the panel's own tab, since DSH has no slot for an overlay across pages; downloads report from the service worker on the same channel.
+- **Saving on a phone goes through the share sheet, which can't reach apps that want a file** (`web/item-view.js`): WebKit gives a web page's shared file to the sheet as a data placeholder (the item provider in `WKShareSheet.mm` for shares from web content), so Save to Files, AirDrop and messengers are listed, Books and reader apps are not, whatever the type and name. A book goes to them from Files after Save to Files. 0.3.3's note that the type makes Books appear was wrong.
 
 ## Later
 
