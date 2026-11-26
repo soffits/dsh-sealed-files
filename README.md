@@ -7,7 +7,7 @@ End-to-end encrypted files and notes for [DeepSeek Harness](https://github.com/d
 - Notes: write or paste text, copy it back out.
 - A clipboard at the top of each space for short text (a link, a code, an error line): paste and send in one step, every snippet shown in full with a one-tap copy button, gone after a day unless kept.
 - A small folder tree in each space. Each person has their own space, and everyone shares one.
-- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files, notes and clipboard snippets in, list and remove devices.
+- The assistant gets a `sealedfiles` tool: see what arrived, read it, put files, notes and clipboard snippets in, list and remove devices. Its list shows names and sizes but never a snippet's or note's text, and `get` with a `path` writes an item to a private local file (mode 600) and answers with the path and byte count only, so a password handed over this way reaches its use without passing through the model's context or the session log.
 - Every stored file is a standard [age](https://age-encryption.org) file encrypted to the assistant's key: `age -d -i identity.txt items/<id>.age` opens it without this plugin.
 
 ## How the encryption works
@@ -60,7 +60,7 @@ Override the `sealed-files` row in your profile's `cordis.patch.yml`:
 | `uploadDays` | 3 | Unfinished uploads are dropped after this long without a new part. |
 | `deviceIdleDays` | 90 | Devices unused this long are removed. |
 
-The tools row (`sealed-files-tools`) takes `outDir` (where `get` writes decrypted files, default `~/tmp/sealed-files`) and `publicOrigin` (the address people open DSH at, for links).
+The tools row (`sealed-files-tools`) takes `outDir` (where `get` writes a decrypted file when no `path` is given, default `~/tmp/sealed-files`) and `publicOrigin` (the address people open DSH at, for links).
 
 A link to `/?sealed-files=<id>` opens the panel on that item.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- The assistant's `list` no longer returns any text: no snippet text and no note preview, only names, sizes, who and when, with `hasText` on snippets and notes. Before, listing to find a password snippet put the password into the model's context and the session log.
+- `get` takes a `path`: the item (snippet, note or file) is decrypted to that file, created with mode 600 in folders made 700 (an existing file is replaced and made 600), and only the id, path and byte count come back. The tool's description names this as the way to take secrets. Without a path, `get` still returns a snippet's or note's text.
+- `text`, `snippet`, `put`, `pin` and `move` answer with the same metadata view, without text.
+
 ## 0.4.1
 
 - Copy text in an opened note works on iPhone Safari and home-screen apps: the clipboard write starts within the tap and the text follows as it is decrypted. Before, Safari refused the write because it came after the download.

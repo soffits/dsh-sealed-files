@@ -3,7 +3,7 @@
  * the page makes them (WebCrypto X25519, the same seal and age modules).
  */
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -187,6 +187,9 @@ test('the assistant reads what arrived and puts files and notes in', async () =>
   assert.deepEqual(index.items.map(i => i.name).sort(), ['beach.mp4', 'flight XY 123.txt', 'report.pdf'])
   assert.deepEqual(index.folders.alice, ['docs'])
   assert.equal((await assistant.get({ id: note.id })).text, 'flight XY 123\nseat 31K')
+  const notePath = join(dir, 'notes/flight.txt')
+  assert.equal((await assistant.get({ id: note.id, path: notePath })).bytes, 22)
+  assert.equal(readFileSync(notePath, 'utf8'), 'flight XY 123\nseat 31K')
   const key = await result(alice, 'key', { id: put.id })
   assert.equal(key.size, 9)
 })
@@ -284,10 +287,26 @@ test('clipboard snippets: sent in one call, text only in the sealed answer, a da
   assert.equal((await call(alice, 'snippet.put', { space: 'alice', text: '   ' })).status, 400)
   assert.equal((await call(alice, 'snippet.put', { space: 'alice', text: 'x'.repeat(SNIPPET_CHARS + 1) })).error, 'snippet-too-long')
 
-  // The assistant reads what arrived, with the text, and puts one in.
+  // The assistant's list never carries text; get writes it to a private file, or reads it when asked without a path.
   const assistant = createAssistant({ service, outDir: join(dir, 'out'), origin: () => 'https://dsh.example' })
-  const arrived = (await assistant.list({ unseen: true })).items.find(i => i.id === sent.id)
-  assert.equal(arrived.text, 'wifi pass: Correct-Horse 42')
+  const listed = await assistant.list({})
+  assert.ok(!JSON.stringify(listed).includes('Correct-Horse'), 'list carries no snippet text')
+  const arrived = listed.items.find(i => i.id === sent.id)
+  assert.equal(arrived.hasText, true)
+  assert.ok(!('text' in arrived) && !('preview' in arrived))
+  for (const item of listed.items.filter(i => i.kind === 'text')) assert.ok(item.hasText && !('preview' in item) && !('text' in item))
+  const secret = join(dir, 'secrets/wifi/pass.txt')
+  const written = await assistant.get({ id: sent.id, path: secret })
+  assert.deepEqual(written, { id: sent.id, path: secret, bytes: Buffer.byteLength('wifi pass: Correct-Horse 42') })
+  assert.equal(readFileSync(secret, 'utf8'), 'wifi pass: Correct-Horse 42')
+  assert.equal(statSync(secret).mode & 0o777, 0o600)
+  assert.equal(statSync(join(dir, 'secrets/wifi')).mode & 0o777, 0o700)
+  writeFileSync(secret, 'an older, longer value that must go', { mode: 0o644 })
+  chmodSync(secret, 0o644)
+  await assistant.get({ id: sent.id, path: secret })
+  assert.equal(readFileSync(secret, 'utf8'), 'wifi pass: Correct-Horse 42', 'an existing file is replaced whole')
+  assert.equal(statSync(secret).mode & 0o777, 0o600, 'and made private')
+  await assert.rejects(assistant.get({ id: sent.id, path: 'relative/pass.txt' }), /absolute/)
   assert.equal((await assistant.get({ id: sent.id })).text, 'wifi pass: Correct-Horse 42')
   const code = await assistant.snippet({ text: '481 552', space: 'alice' })
   assert.equal(code.unseen, false)
