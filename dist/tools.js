@@ -1,5 +1,5 @@
 // tools.js
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { resolve as resolve2 } from "node:path";
 
 // node_modules/@deepseek-ai/cosmokit/lib/index.js
@@ -871,7 +871,8 @@ defineMethod("transform", [
 // src/assistant.js
 import { createReadStream as createReadStream2 } from "node:fs";
 import { mkdir, open as open2, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { ID, SHARED as SHARED2, SNIPPET as SNIPPET2, cleanFolder as cleanFolder2 } from "../web/protocol.js";
 
 // src/files.js
@@ -932,7 +933,28 @@ function createAssistant({ service, outDir, origin }) {
     if (!spaces.includes(space)) throw fail(`unknown space ${space}; spaces: ${spaces.join(", ")}`);
     return space;
   }
-  const view = async (item) => ({ ...await service.fullView(item), link: link(item.id), unseen: !item.seenByAssistant });
+  const view = (item) => ({ ...service.itemView(item), ...item.kind === SNIPPET2 || item.kind === "text" ? { hasText: true } : {}, link: link(item.id), unseen: !item.seenByAssistant });
+  async function writeOut(item, path) {
+    await mkdir(dirname(path), { recursive: true, mode: 448 });
+    let size = 0;
+    const handle = await open2(path, "w", 384);
+    try {
+      await handle.chmod(384);
+      await handle.truncate(0);
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) {
+        await handle.write(piece, 0, piece.length, size);
+        size += piece.length;
+      }
+    } finally {
+      await handle.close();
+    }
+    return size;
+  }
+  async function readText(item) {
+    const pieces = [];
+    for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece);
+    return Buffer.concat(pieces).toString("utf8");
+  }
   return {
     spaces: () => store.spacesOf(ASSISTANT).map((space) => ({ id: space, name: space === SHARED2 ? "shared" : service.nameOf(space) })),
     async list({ space, folder, unseen } = {}) {
@@ -941,35 +963,22 @@ function createAssistant({ service, outDir, origin }) {
       if (folder !== void 0) items = items.filter((item) => item.folder === folder);
       if (unseen) items = items.filter((item) => !item.seenByAssistant);
       items.sort((a, b) => b.created - a.created);
-      const out = await Promise.all(items.map(view));
+      const out = items.map(view);
       await store.markSeen(items.map((item) => item.id));
       return { spaces: this.spaces(), folders: store.foldersFor(ASSISTANT), items: out };
     },
-    async get({ id }) {
+    async get({ id, path }) {
       if (!ID.test(String(id))) throw fail("bad id");
+      const target = path ? String(path).replace(/^~(?=$|\/)/, homedir()) : void 0;
+      if (target !== void 0 && !isAbsolute(target)) throw fail("path must be absolute");
       const item = store.item(id);
       if (item === null || item.derivedOf) throw Object.assign(new Error("no such file"), { status: 404 });
       await store.markSeen([id]);
-      if (item.kind === SNIPPET2) return view(item);
-      if (item.kind === "text" && item.size <= INLINE_TEXT) {
-        const pieces = [];
-        for await (const piece of decryptFile(store.itemPath(id), identity.priv, item.size)) pieces.push(piece);
-        return { ...await view(item), text: Buffer.concat(pieces).toString("utf8") };
-      }
-      const dir = join(outDir, id);
-      await mkdir(dir, { recursive: true, mode: 448 });
-      const path = join(dir, item.name);
-      let size = 0;
-      const handle = await open2(path, "w", 384);
-      try {
-        for await (const piece of decryptFile(store.itemPath(id), identity.priv, item.size)) {
-          await handle.write(piece, 0, piece.length, size);
-          size += piece.length;
-        }
-      } finally {
-        await handle.close();
-      }
-      return { ...await view(item), path };
+      if (target !== void 0) return { id, path: target, bytes: await writeOut(item, target) };
+      if (item.kind === SNIPPET2 || item.kind === "text" && item.size <= INLINE_TEXT) return { ...view(item), text: await readText(item) };
+      const out = join(outDir, id, item.name);
+      await writeOut(item, out);
+      return { ...view(item), path: out };
     },
     async put({ path, space, folder, name: name2 }) {
       const info = await stat(path);
@@ -1011,12 +1020,12 @@ var Config = Schema.object({
 var PARAMETERS = Object.freeze({
   type: "object",
   properties: {
-    action: { type: "string", enum: ["list", "get", "put", "text", "snippet", "remove", "pin", "move", "mkdir", "devices", "revoke"], description: "list: files, notes and clipboard snippets, newest first, with unseen marked (listing marks them seen); a snippet carries its text. get: decrypt one; a note or snippet comes back as text, a file is written to a local path. put: encrypt a local file into a space. text: put a note (a .txt file, kept like files). snippet: put short text on the space's clipboard (a link, a code, a password, an error line; shown in full with a copy button, deleted after a day unless pinned). remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; revoke removes one. Adding a device needs no assistant: the person approves it on a device they already added, or with the yes button in the confirmation sent to their chat app." },
+    action: { type: "string", enum: ["list", "get", "put", "text", "snippet", "remove", "pin", "move", "mkdir", "devices", "revoke"], description: "list: files, notes and clipboard snippets, newest first, with unseen marked (listing marks them seen); metadata only, never text (hasText marks a snippet or note). get: decrypt one. With path, it is written to that local file (mode 600, new folders 700) and only the path and byte count come back: the way to take a password, code or token, so it goes from the panel to its use without entering your context. Without path, a snippet or note comes back as text (for a note or link you mean to read) and a file is written under the out folder. put: encrypt a local file into a space. text: put a note (a .txt file, kept like files). snippet: put short text on the space's clipboard (a link, a code, a password, an error line; shown in full with a copy button, deleted after a day unless pinned). remove, pin (pinned files never expire), move, mkdir. devices: every device and its state; revoke removes one. Adding a device needs no assistant: the person approves it on a device they already added, or with the yes button in the confirmation sent to their chat app." },
     space: { type: "string", description: "list (filter), put, text, snippet, move, mkdir: a space id. Each person has their own (their person id), and `shared` is everyone's. Files expire after the retention days unless pinned." },
     folder: { type: "string", description: "A folder path inside the space (a/b), empty for the top." },
     unseen: { type: "boolean", description: "list: only what arrived since you last listed or read it." },
     id: { type: "string", description: "get, remove, pin, move: the item id." },
-    path: { type: "string", description: "put: absolute path of a local file." },
+    path: { type: "string", description: "put: absolute path of a local file. get: absolute path (or ~/...) to write the item to, replaced if it exists; use it for anything secret." },
     name: { type: "string", description: "put: the name to show, defaults to the file name." },
     text: { type: "string", description: "text: the note. snippet: the text, up to 10000 characters." },
     title: { type: "string", description: "text: a name for the note; defaults to its first line." },
@@ -1028,7 +1037,7 @@ var PARAMETERS = Object.freeze({
   additionalProperties: false
 });
 var DESCRIPTION = "Sealed Files: the end-to-end encrypted file and note panel in the DSH Web UI, with a clipboard for short text. People drop files, notes and snippets there for you, and you put them there for them; everything is encrypted in their browser and only you and their own devices can read it. Each result carries a link to open the item in the panel; send it with your message.";
-var expand = (path) => resolve2(path.replace(/^~(?=$|\/)/, homedir()));
+var expand = (path) => resolve2(path.replace(/^~(?=$|\/)/, homedir2()));
 function createTool({ getService, outDir, origin }) {
   return {
     name: "sealedfiles",

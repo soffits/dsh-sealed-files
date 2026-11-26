@@ -6,7 +6,8 @@
  */
 import { createReadStream } from 'node:fs'
 import { mkdir, open, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { ID, SHARED, SNIPPET, cleanFolder } from '../web/protocol.js'
 import { decryptFile } from './files.js'
 import { ASSISTANT } from './store.js'
@@ -26,7 +27,33 @@ export function createAssistant({ service, outDir, origin }) {
     return space
   }
 
-  const view = async item => ({ ...(await service.fullView(item)), link: link(item.id), unseen: !item.seenByAssistant })
+  // No text in what the assistant sees of an item: snippets and notes are often passwords and codes, and anything
+  // here lands in the model's context and session log. Text comes only from get, into context or to a file.
+  const view = item => ({ ...service.itemView(item), ...(item.kind === SNIPPET || item.kind === 'text' ? { hasText: true } : {}), link: link(item.id), unseen: !item.seenByAssistant })
+
+  /** Decrypts an item to path, chunk by chunk so a large file never sits in memory whole; 0600, new folders 0700. */
+  async function writeOut(item, path) {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    let size = 0
+    const handle = await open(path, 'w', 0o600)
+    try {
+      await handle.chmod(0o600)
+      await handle.truncate(0)
+      for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) {
+        await handle.write(piece, 0, piece.length, size)
+        size += piece.length
+      }
+    } finally {
+      await handle.close()
+    }
+    return size
+  }
+
+  async function readText(item) {
+    const pieces = []
+    for await (const piece of decryptFile(store.itemPath(item.id), identity.priv, item.size)) pieces.push(piece)
+    return Buffer.concat(pieces).toString('utf8')
+  }
 
   return {
     spaces: () => store.spacesOf(ASSISTANT).map(space => ({ id: space, name: space === SHARED ? 'shared' : service.nameOf(space) })),
@@ -37,37 +64,23 @@ export function createAssistant({ service, outDir, origin }) {
       if (folder !== undefined) items = items.filter(item => item.folder === folder)
       if (unseen) items = items.filter(item => !item.seenByAssistant)
       items.sort((a, b) => b.created - a.created)
-      const out = await Promise.all(items.map(view))
+      const out = items.map(view)
       await store.markSeen(items.map(item => item.id))
       return { spaces: this.spaces(), folders: store.foldersFor(ASSISTANT), items: out }
     },
 
-    async get({ id }) {
+    async get({ id, path }) {
       if (!ID.test(String(id))) throw fail('bad id')
+      const target = path ? String(path).replace(/^~(?=$|\/)/, homedir()) : undefined
+      if (target !== undefined && !isAbsolute(target)) throw fail('path must be absolute')
       const item = store.item(id)
       if (item === null || item.derivedOf) throw Object.assign(new Error('no such file'), { status: 404 })
       await store.markSeen([id])
-      if (item.kind === SNIPPET) return view(item)
-      if (item.kind === 'text' && item.size <= INLINE_TEXT) {
-        const pieces = []
-        for await (const piece of decryptFile(store.itemPath(id), identity.priv, item.size)) pieces.push(piece)
-        return { ...(await view(item)), text: Buffer.concat(pieces).toString('utf8') }
-      }
-      const dir = join(outDir, id)
-      await mkdir(dir, { recursive: true, mode: 0o700 })
-      const path = join(dir, item.name)
-      let size = 0
-      // Written chunk by chunk so a large file never sits in memory whole.
-      const handle = await open(path, 'w', 0o600)
-      try {
-        for await (const piece of decryptFile(store.itemPath(id), identity.priv, item.size)) {
-          await handle.write(piece, 0, piece.length, size)
-          size += piece.length
-        }
-      } finally {
-        await handle.close()
-      }
-      return { ...(await view(item)), path }
+      if (target !== undefined) return { id, path: target, bytes: await writeOut(item, target) }
+      if (item.kind === SNIPPET || (item.kind === 'text' && item.size <= INLINE_TEXT)) return { ...view(item), text: await readText(item) }
+      const out = join(outDir, id, item.name)
+      await writeOut(item, out)
+      return { ...view(item), path: out }
     },
 
     async put({ path, space, folder, name }) {
