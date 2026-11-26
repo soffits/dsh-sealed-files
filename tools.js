@@ -27,7 +27,7 @@ export const PARAMETERS = Object.freeze({
     path: { type: 'string', description: 'put: absolute path of a local file. get: absolute path (or ~/...) to write the item to, replaced if it exists; use it for anything secret.' },
     name: { type: 'string', description: 'put: the name to show, defaults to the file name.' },
     text: { type: 'string', description: 'text: the note. snippet: the text, up to 10000 characters.' },
-    title: { type: 'string', description: 'text: a name for the note; defaults to its first line.' },
+    title: { type: 'string', description: 'text: a name for the note; defaults to the date and time, never its text.' },
     pinned: { type: 'boolean', description: 'pin: true keeps it, false lets it expire again.' },
     person: { type: 'string', description: 'devices: only this person\'s.' },
     device: { type: 'string', description: 'revoke: the device id.' },

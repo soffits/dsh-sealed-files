@@ -1928,10 +1928,12 @@ async function createService({ config, limits, stateDir, identityFile, officeToP
     const now = Date.now();
     return store.addItem({ id, space, folder: where, name: clean, type, kind, size, cipherSize, payloadAt, from: { person: from2 }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from2 === ASSISTANT });
   }
+  const pad = (n) => String(n).padStart(2, "0");
+  const localStamp = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   function addNote(from2, { text, space, folder, title }) {
     if (typeof text !== "string" || text === "") throw fail(400, "no text");
     const bytes = Buffer.from(text, "utf8");
-    const name2 = cleanName(title) ?? `${text.split("\n")[0].slice(0, 40).trim() || "Note"}.txt`;
+    const name2 = cleanName(title) ?? `${localStamp(/* @__PURE__ */ new Date())}.txt`;
     return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name2) ? name2 : `${name2}.txt`, type: TEXT_TYPE, kind: "text", from: from2 });
   }
   function addSnippet(from2, { text, space }) {

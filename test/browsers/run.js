@@ -194,6 +194,16 @@ async function main() {
     await p.locator('.sheet-wrap textarea').fill('Confirmation 7731-QX\nCheck-in 15:00, room 412')
     await p.getByRole('button', { name: 'Save note' }).click()
     await p.locator('.row .snippet', { hasText: 'Confirmation 7731-QX' }).waitFor()
+    // A note left untitled is named by its time, never by its text.
+    await p.getByRole('button', { name: 'New' }).click()
+    await p.getByRole('menuitem', { name: 'New note' }).click()
+    await p.locator('.sheet-wrap textarea').fill('Tr0ub4dor-one-line')
+    await p.getByRole('button', { name: 'Save note' }).click()
+    const untitled = p.locator('.row', { has: p.locator('.snippet', { hasText: 'Tr0ub4dor-one-line' }) })
+    await untitled.waitFor()
+    const untitledName = await untitled.locator('.name').textContent()
+    assert.match(untitledName, /^Note .+\.txt$/, `untitled note name: ${untitledName}`)
+    assert.ok(!untitledName.includes('Tr0ub4dor'), 'the note text is not its name')
     if (shots) await p.screenshot({ path: join(shots, 'phone-list.png') })
 
     await p.locator('.row', { hasText: 'beach-walk.mp4' }).click()
