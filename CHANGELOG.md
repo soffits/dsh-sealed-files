@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- A note the assistant puts in without a title is named by the date and time it was made (`2026-11-26 18:55.txt`, the host's local time), no longer by its first line. A one-line note is often a password, and a name shows in every list. A title given is kept. Notes written in the panel were already named `Note <date and time>` when left untitled; the browser tests now check that too.
+
 ## 0.5.0
 
 - The assistant's `list` no longer returns any text: no snippet text and no note preview, only names, sizes, who and when, with `hasText` on snippets and notes. Before, listing to find a password snippet put the password into the model's context and the session log.

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { createApiRoutes } from '../src/api.js'
 import { followDecisions } from '../src/decisions.js'
 import { createAssistant } from '../src/assistant.js'
+import { ASSISTANT } from '../src/store.js'
 import { limitsOf, Config } from '../src/config.js'
 import { createService } from '../src/service.js'
 import { createStore } from '../src/store.js'
@@ -181,8 +182,11 @@ test('the assistant reads what arrived and puts files and notes in', async () =>
   writeFileSync(join(dir, 'report.pdf'), 'pdf bytes')
   const put = await assistant.put({ path: join(dir, 'report.pdf'), space: 'alice', folder: 'docs' })
   assert.equal(put.type, 'application/pdf')
-  const note = await assistant.text({ text: 'flight XY 123\nseat 31K', space: 'alice' })
-  assert.equal(note.name, 'flight XY 123.txt')
+  const note = await assistant.text({ text: 'flight XY 123\nseat 31K', space: 'alice', title: 'flight XY 123' })
+  assert.equal(note.name, 'flight XY 123.txt', 'a title given is kept')
+  const untitled = await assistant.text({ text: 'Correct-Horse-Battery', space: 'bob' })
+  assert.match(untitled.name, /^\d{4}-\d\d-\d\d \d\d:\d\d\.txt$/, 'an untitled note is named by its time, not its text')
+  await service.store.removeItem(ASSISTANT, untitled.id)
   const index = await result(alice, 'index')
   assert.deepEqual(index.items.map(i => i.name).sort(), ['beach.mp4', 'flight XY 123.txt', 'report.pdf'])
   assert.deepEqual(index.folders.alice, ['docs'])

@@ -60,11 +60,16 @@ export async function createService({ config, limits, stateDir, identityFile, of
     return store.addItem({ id, space, folder: where, name: clean, type, kind, size, cipherSize, payloadAt, from: { person: from }, created: now, pinned: false, expires: store.expiresAt(kind, false, now), seenByAssistant: from === ASSISTANT })
   }
 
+  const pad = n => String(n).padStart(2, '0')
+  const localStamp = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+
   /** A note: text stored as a file. */
   function addNote(from, { text, space, folder, title }) {
     if (typeof text !== 'string' || text === '') throw fail(400, 'no text')
     const bytes = Buffer.from(text, 'utf8')
-    const name = cleanName(title) ?? `${text.split('\n')[0].slice(0, 40).trim() || 'Note'}.txt`
+    // An untitled note is named by when it was made, never by its text: a one-line note is often a password, and
+    // a name shows in every list.
+    const name = cleanName(title) ?? `${localStamp(new Date())}.txt`
     return addFile([bytes], bytes.length, { space, folder, name: /\.[a-z0-9]+$/i.test(name) ? name : `${name}.txt`, type: TEXT_TYPE, kind: 'text', from })
   }
 
